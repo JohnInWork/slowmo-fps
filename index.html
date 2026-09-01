@@ -2,112 +2,173 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SlowmoFPS — прототип</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#040406">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>SlowmoFPS Runner</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { height:100%; overflow:hidden; background:#040406; font-family:'Arial Narrow',Arial,sans-serif; }
-  canvas { display:block; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body {
+    height:100%; overflow:hidden; background:#040406;
+    font-family:'Arial Narrow',Arial,sans-serif; color:#fff;
+    touch-action:none; overscroll-behavior:none;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+  }
+  canvas { display:block; touch-action:none; }
 
-  /* ---------- HUD ---------- */
-  #hud { position:fixed; inset:0; pointer-events:none; z-index:10; }
-
-  #crosshair {
-    position:absolute; left:50%; top:50%; width:22px; height:22px;
-    transform:translate(-50%,-50%); transition:opacity .1s;
-  }
-  #crosshair::before, #crosshair::after {
-    content:''; position:absolute; background:#fff;
-  }
-  #crosshair::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
-  #crosshair::after  { top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
-  #crosshair.hit { filter:none; }
-  #crosshair.hit::before, #crosshair.hit.hit::after { background:#ff1e1e; }
-
-  #stats {
-    position:absolute; left:28px; bottom:24px; color:#fff;
-    text-transform:uppercase; letter-spacing:2px;
-  }
-  #stats .big { font-size:52px; font-weight:900; line-height:.9; }
-  #stats .sub { font-size:15px; opacity:.6; letter-spacing:4px; margin-top:4px; }
-
-  /* time bar */
-  #timewrap {
-    position:absolute; right:28px; top:50%; transform:translateY(-50%);
-    height:220px; width:8px; background:rgba(255,255,255,.1); border-radius:4px;
-  }
-  #timebar {
-    position:absolute; bottom:0; width:100%; background:#fff; border-radius:4px; height:5%;
-  }
-  #timelabel {
-    position:absolute; right:44px; top:50%; transform:translateY(-50%) rotate(0deg);
-    font-size:12px; letter-spacing:3px; color:#fff; opacity:.5; writing-mode:vertical-rl;
+  /* безопасные зоны айфона: всё поверх кадра живёт внутри них */
+  #hud {
+    position:fixed; inset:0; pointer-events:none; z-index:10;
+    padding:calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 16px)
+            calc(env(safe-area-inset-bottom) + 14px) calc(env(safe-area-inset-left) + 16px);
   }
 
-  #health {
-    position:absolute; left:28px; bottom:0; width:0; height:6px; background:#ff1e1e;
-    transition:width .15s;
-  }
-  #healthtrack { position:absolute; left:0; bottom:0; width:100%; height:6px; background:rgba(255,255,255,.08); }
+  /* ---------- счётчики ---------- */
+  #dist { position:absolute; left:calc(env(safe-area-inset-left) + 16px); top:calc(env(safe-area-inset-top) + 12px);
+          font-size:44px; font-weight:900; line-height:.9; letter-spacing:1px; }
+  #dist small { display:block; font-size:12px; font-weight:400; letter-spacing:4px; opacity:.5; margin-top:5px; }
+  #kills { position:absolute; right:calc(env(safe-area-inset-right) + 16px); top:calc(env(safe-area-inset-top) + 12px);
+           font-size:22px; font-weight:900; letter-spacing:2px; text-align:right; opacity:.9; }
+  #kills small { display:block; font-size:11px; font-weight:400; letter-spacing:3px; opacity:.55; margin-top:3px; }
 
-  #ammo {
-    position:absolute; right:34px; bottom:28px; color:#fff;
-    font-size:34px; letter-spacing:3px; text-align:right; opacity:.9;
+  /* ---------- жизни ---------- */
+  #hp { position:absolute; left:calc(env(safe-area-inset-left) + 16px); top:calc(env(safe-area-inset-top) + 78px); display:flex; gap:7px; }
+  #hp i { width:26px; height:5px; background:#ff1e1e; border-radius:2px; transition:opacity .18s, transform .18s; }
+  #hp i.gone { opacity:.16; transform:scaleY(.5); background:#fff; }
+
+  /* ---------- кнопка замедления времени ---------- */
+  #slowbtn {
+    position:absolute; left:50%; bottom:calc(env(safe-area-inset-bottom) + 28px);
+    width:88px; height:88px; margin-left:-44px; padding:0;
+    background:rgba(255,255,255,.05); border:none; border-radius:50%;
+    pointer-events:auto; touch-action:none; cursor:pointer;
+    transition:background .12s, transform .12s;
   }
-  #ammo b { font-size:52px; font-weight:900; }
+  #slowbtn svg.ring { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+  #slowbtn .track { fill:none; stroke:rgba(255,255,255,.12); stroke-width:5; }
+  #slowbtn .bar   { fill:none; stroke:#fff; stroke-width:5; stroke-linecap:round;
+                    stroke-dasharray:276.5; stroke-dashoffset:0; transition:stroke .2s; }
+  #slowbtn .glyph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  #slowbtn .glyph svg { width:34px; height:34px; fill:#fff; opacity:.9; }
+  #slowbtn.on { background:rgba(255,255,255,.18); transform:scale(.94); }
+  #slowbtn.gain { animation:gain .4s ease-out; }
+  @keyframes gain {
+    0%   { box-shadow:0 0 0 0 rgba(255,255,255,.55); }
+    100% { box-shadow:0 0 0 26px rgba(255,255,255,0); }
+  }
+  #slowbtn.empty .bar { stroke:#ff1e1e; }
+  #slowbtn.empty .glyph svg { opacity:.3; }
+  #slowbtn::after {
+    content:'ВРЕМЯ'; position:absolute; left:0; right:0; bottom:-18px;
+    font-size:10px; letter-spacing:3px; color:#fff; opacity:.4; font-family:inherit;
+  }
+
+  /* ---------- отметка тапа ---------- */
+  #tapmark { position:absolute; width:46px; height:46px; margin:-23px 0 0 -23px; opacity:0; }
+  #tapmark::before, #tapmark::after { content:''; position:absolute; background:#fff; }
+  #tapmark::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
+  #tapmark::after  { top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
+  #tapmark.on { animation:ping .26s ease-out; }
+  @keyframes ping { from { opacity:.95; transform:scale(.45); } to { opacity:0; transform:scale(1.15); } }
 
   #hitflash { position:absolute; inset:0; background:#ff1e1e; opacity:0; }
+  #slowtint { position:absolute; inset:0; opacity:0; transition:opacity .2s;
+              box-shadow:inset 0 0 90px rgba(255,255,255,.22); }
+  #slowtint.on { opacity:1; }
 
-  /* ---------- menus ---------- */
-  #menu, #over {
+  /* ---------- экраны ---------- */
+  .screen {
     position:fixed; inset:0; z-index:20; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; text-align:center;
-    background:#040406; color:#fff;
+    align-items:center; justify-content:center; text-align:center; background:#040406;
+    padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 20px);
   }
-  #over { display:none; background:#040406; color:#fff; }
-  .title { font-size:100px; font-weight:900; letter-spacing:10px; text-shadow:0 0 30px rgba(255,255,255,.35); }
+  #over, #rotate { display:none; }
+  /* экран смерти не выпрыгивает, а проявляется поверх догорающей сцены */
+  #over { animation:overin .55s ease-out; }
+  @keyframes overin { from { opacity:0; } to { opacity:1; } }
+  .title { font-size:clamp(44px,15vw,86px); font-weight:900; letter-spacing:6px; line-height:1;
+           text-shadow:0 0 30px rgba(255,255,255,.35); }
   .title span { color:#ff2626; text-shadow:0 0 40px rgba(255,38,38,.7); }
-  .btn {
-    margin-top:34px; padding:16px 46px; font-size:20px; letter-spacing:5px;
-    text-transform:uppercase; background:#fff; color:#040406; border:none; cursor:pointer;
-    transition:transform .1s;
+  .sub { margin-top:10px; font-size:13px; letter-spacing:6px; opacity:.5; text-transform:uppercase; }
+  .btn { margin-top:36px; padding:18px 54px; font-size:19px; letter-spacing:5px; text-transform:uppercase;
+         background:#fff; color:#040406; border:none; border-radius:2px; font-family:inherit; font-weight:700;
+         cursor:pointer; pointer-events:auto; transition:transform .1s; }
+  .btn:active { transform:scale(.96); }
+  #over .btn { background:#ff1e1e; color:#fff; }
+  /* выбор оружия перед забегом */
+  .pick { margin-top:30px; display:flex; gap:16px; }
+  .wbtn {
+    width:76px; height:64px; padding:0; background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.2); border-radius:10px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:auto; transition:background .14s, border-color .14s, transform .1s;
   }
-  #over .btn { background:#ff1e1e; }
-  .btn:hover { transform:scale(1.05); }
-  .keys { margin-top:40px; font-size:14px; letter-spacing:3px; opacity:.55; line-height:2; }
-  kbd { background:#fff; color:#040406; padding:2px 9px; border-radius:3px; font-family:inherit; }
-  #over .final { font-size:26px; letter-spacing:4px; margin-top:20px; }
+  .wbtn svg { width:42px; height:42px; fill:#fff; opacity:.5; transition:fill .14s, opacity .14s; }
+  .wbtn.on { background:#fff; border-color:#fff; }
+  .wbtn.on svg { fill:#040406; opacity:1; }
+  .wbtn:active { transform:scale(.95); }
+  .picklab { margin-top:12px; font-size:11px; letter-spacing:4px; opacity:.4; text-transform:uppercase; }
+
+  .keys { margin-top:34px; font-size:13px; letter-spacing:2px; opacity:.55; line-height:2.1; }
+  .keys b { color:#fff; font-weight:700; opacity:.9; }
+  .final { margin-top:22px; font-size:20px; letter-spacing:3px; }
+  .final b { font-size:56px; font-weight:900; display:block; letter-spacing:1px; margin-bottom:4px; }
+  .best { margin-top:14px; font-size:13px; letter-spacing:3px; opacity:.5; }
+  #rotate .title { font-size:34px; letter-spacing:3px; }
 </style>
 </head>
 <body>
-  <div id="hud">
-    <div id="crosshair"></div>
-    <div id="stats">
-      <div class="big" id="kills">0</div>
-      <div class="sub">убито</div>
-    </div>
-    <div id="timewrap"><div id="timebar"></div></div>
-    <div id="timelabel">ВРЕМЯ</div>
-    <div id="healthtrack"></div>
-    <div id="health"></div>
-    <div id="ammo"><b>НОЖ</b> ∞</div>
-    <div id="hitflash"></div>
-  </div>
 
-  <div id="menu">
-    <div class="title">SLOWMO<span>FPS</span></div>
-    <button class="btn" id="start">Играть</button>
-    <div class="keys">
-      <kbd>WASD</kbd> движение &nbsp;·&nbsp; <kbd>Shift</kbd> бег &nbsp;·&nbsp; <kbd>Space</kbd> прыжок ×2 &nbsp;·&nbsp; <kbd>ЛКМ</kbd> огонь / бросок<br>
-      <kbd>ПКМ</kbd> прицел &nbsp;·&nbsp; <kbd>R</kbd> перезарядка &nbsp;·&nbsp; <kbd>1</kbd>/<kbd>2</kbd> пистолет / нож &nbsp;·&nbsp; <kbd>G</kbd> осмотр оружия
-    </div>
-  </div>
+<div id="hud">
+  <div id="dist">0<small>метров</small></div>
+  <div id="kills">0<small>убито</small></div>
+  <div id="hp"><i></i><i></i><i></i></div>
+  <button id="slowbtn" aria-label="замедлить время">
+    <svg class="ring" viewBox="0 0 100 100">
+      <circle class="track" cx="50" cy="50" r="44"></circle>
+      <circle class="bar" cx="50" cy="50" r="44"></circle>
+    </svg>
+    <span class="glyph"><svg viewBox="0 0 24 24"><path d="M6 2h12v2.6c0 1.2-.5 2.3-1.4 3.1L13.4 12l3.2 4.3c.9.8 1.4 1.9 1.4 3.1V22H6v-2.6c0-1.2.5-2.3 1.4-3.1L10.6 12 7.4 7.7C6.5 6.9 6 5.8 6 4.6V2zm2.4 2.6c0 .6.2 1.1.7 1.5L12 9.6l2.9-3.5c.5-.4.7-.9.7-1.5V4H8.4v.6z"></path></svg></span>
+  </button>
+  <div id="tapmark"></div>
+  <div id="slowtint"></div>
+  <div id="hitflash"></div>
+</div>
 
-  <div id="over">
-    <div class="title" style="font-size:70px">ТЫ МЁРТВ</div>
-    <div class="final" id="finalscore">убито: 0</div>
-    <button class="btn" id="restart">Заново</button>
+<div class="screen" id="menu">
+  <div class="title">SLOWMO<span>FPS</span></div>
+  <div class="sub">runner</div>
+  <div class="pick">
+    <button class="wbtn on" id="pick-pistol" aria-label="пистолет">
+      <svg viewBox="0 0 24 24"><path d="M4 5h18v4.5H10L8 19H3.5l2-9.5H4V5z"></path></svg>
+    </button>
+    <button class="wbtn" id="pick-knife" aria-label="нож">
+      <svg viewBox="0 0 24 24"><path d="M20.4 2.2c.5-.5 1.3.3.9.9l-8.1 9.6-2.3-2.3 9.5-8.2zM9.6 11.3l3.1 3.1-5.2 5.9c-.6.7-1.7.7-2.4 0l-1.4-1.4c-.7-.7-.7-1.8 0-2.4l5.9-5.2z"></path></svg>
+    </button>
   </div>
+  <div class="picklab">оружие</div>
+  <button class="btn" id="start">Играть</button>
+  <div class="keys">
+    <b>свайп ◀ ▶</b> сменить полосу<br>
+    <b>свайп ▲</b> прыжок<br>
+    <b>тап</b> выстрел &nbsp;·&nbsp; <b>зажать</b> осмотр оружия<br>
+    <b>кнопка внизу</b> замедлить время<br>
+    <b>синие капсулы</b> сбей — время вернётся
+  </div>
+</div>
+
+<div class="screen" id="over">
+  <div class="title" style="font-size:clamp(34px,11vw,62px)">ТЫ МЁРТВ</div>
+  <div class="final"><b id="finaldist">0</b>метров пройдено</div>
+  <div class="best" id="best"></div>
+  <button class="btn" id="restart">Заново</button>
+</div>
+
+<div class="screen" id="rotate">
+  <div class="title">ПОВЕРНИ<br>ТЕЛЕФОН</div>
+  <div class="sub">игра вертикальная</div>
+</div>
 
 <script type="importmap">
 {
@@ -117,6 +178,6 @@
   }
 }
 </script>
-<script type="module" src="./js/main.js"></script>
+<script type="module" src="./js/runner.js"></script>
 </body>
 </html>

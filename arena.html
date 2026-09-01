@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlowmoFPS — прототип</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; overflow:hidden; background:#040406; font-family:'Arial Narrow',Arial,sans-serif; }
+  canvas { display:block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position:fixed; inset:0; pointer-events:none; z-index:10; }
+
+  #crosshair {
+    position:absolute; left:50%; top:50%; width:22px; height:22px;
+    transform:translate(-50%,-50%); transition:opacity .1s;
+  }
+  #crosshair::before, #crosshair::after {
+    content:''; position:absolute; background:#fff;
+  }
+  #crosshair::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
+  #crosshair::after  { top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
+  #crosshair.hit { filter:none; }
+  #crosshair.hit::before, #crosshair.hit.hit::after { background:#ff1e1e; }
+
+  #stats {
+    position:absolute; left:28px; bottom:24px; color:#fff;
+    text-transform:uppercase; letter-spacing:2px;
+  }
+  #stats .big { font-size:52px; font-weight:900; line-height:.9; }
+  #stats .sub { font-size:15px; opacity:.6; letter-spacing:4px; margin-top:4px; }
+
+  /* time bar */
+  #timewrap {
+    position:absolute; right:28px; top:50%; transform:translateY(-50%);
+    height:220px; width:8px; background:rgba(255,255,255,.1); border-radius:4px;
+  }
+  #timebar {
+    position:absolute; bottom:0; width:100%; background:#fff; border-radius:4px; height:5%;
+  }
+  #timelabel {
+    position:absolute; right:44px; top:50%; transform:translateY(-50%) rotate(0deg);
+    font-size:12px; letter-spacing:3px; color:#fff; opacity:.5; writing-mode:vertical-rl;
+  }
+
+  #health {
+    position:absolute; left:28px; bottom:0; width:0; height:6px; background:#ff1e1e;
+    transition:width .15s;
+  }
+  #healthtrack { position:absolute; left:0; bottom:0; width:100%; height:6px; background:rgba(255,255,255,.08); }
+
+  #ammo {
+    position:absolute; right:34px; bottom:28px; color:#fff;
+    font-size:34px; letter-spacing:3px; text-align:right; opacity:.9;
+  }
+  #ammo b { font-size:52px; font-weight:900; }
+
+  #hitflash { position:absolute; inset:0; background:#ff1e1e; opacity:0; }
+
+  /* ---------- menus ---------- */
+  #menu, #over {
+    position:fixed; inset:0; z-index:20; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:#040406; color:#fff;
+  }
+  #over { display:none; background:#040406; color:#fff; }
+  .title { font-size:100px; font-weight:900; letter-spacing:10px; text-shadow:0 0 30px rgba(255,255,255,.35); }
+  .title span { color:#ff2626; text-shadow:0 0 40px rgba(255,38,38,.7); }
+  .btn {
+    margin-top:34px; padding:16px 46px; font-size:20px; letter-spacing:5px;
+    text-transform:uppercase; background:#fff; color:#040406; border:none; cursor:pointer;
+    transition:transform .1s;
+  }
+  #over .btn { background:#ff1e1e; }
+  .btn:hover { transform:scale(1.05); }
+  .keys { margin-top:40px; font-size:14px; letter-spacing:3px; opacity:.55; line-height:2; }
+  kbd { background:#fff; color:#040406; padding:2px 9px; border-radius:3px; font-family:inherit; }
+  #over .final { font-size:26px; letter-spacing:4px; margin-top:20px; }
+</style>
+</head>
+<body>
+  <div id="hud">
+    <div id="crosshair"></div>
+    <div id="stats">
+      <div class="big" id="kills">0</div>
+      <div class="sub">убито</div>
+    </div>
+    <div id="timewrap"><div id="timebar"></div></div>
+    <div id="timelabel">ВРЕМЯ</div>
+    <div id="healthtrack"></div>
+    <div id="health"></div>
+    <div id="ammo"><b>НОЖ</b> ∞</div>
+    <div id="hitflash"></div>
+  </div>
+
+  <div id="menu">
+    <div class="title">SLOWMO<span>FPS</span></div>
+    <button class="btn" id="start">Играть</button>
+    <div class="keys">
+      <kbd>WASD</kbd> движение &nbsp;·&nbsp; <kbd>Shift</kbd> бег &nbsp;·&nbsp; <kbd>Space</kbd> прыжок ×2 &nbsp;·&nbsp; <kbd>ЛКМ</kbd> огонь / бросок<br>
+      <kbd>ПКМ</kbd> прицел &nbsp;·&nbsp; <kbd>R</kbd> перезарядка &nbsp;·&nbsp; <kbd>1</kbd>/<kbd>2</kbd> пистолет / нож &nbsp;·&nbsp; <kbd>G</kbd> осмотр оружия
+    </div>
+  </div>
+
+  <div id="over">
+    <div class="title" style="font-size:70px">ТЫ МЁРТВ</div>
+    <div class="final" id="finalscore">убито: 0</div>
+    <button class="btn" id="restart">Заново</button>
+  </div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
