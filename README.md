@@ -1,10 +1,10 @@
 **English** · [Русский](README.ru.md)
 
-# SUPERHOT FPS — prototype
+# SlowmoFPS — prototype
 
 A first-person shooter on Three.js: a black world, white polygon edges, no fills anywhere. Time moves only when you do — stand still and the world nearly freezes.
 
-![SUPERHOT FPS](screenshots/gameplay.jpg)
+![SlowmoFPS](screenshots/gameplay.jpg)
 
 ## What's inside
 
