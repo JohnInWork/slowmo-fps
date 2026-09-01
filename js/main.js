@@ -387,7 +387,7 @@ loadGLB('./models/pistol.glb', gltf=>{
 // ============================================================
 //  Weapon 2: throwing knives (downloaded low-poly K-Bar)
 // ============================================================
-let weapon='pistol';
+let weapon='knife';
 const KNIFE_LEN=0.6, THROW_TIME=0.3, INSPECT_TIME=1.0;
 const knifeHolder=new THREE.Group(); camera.add(knifeHolder); knifeHolder.visible=false;
 let knifeProto=null, knifeView=null, throwCd=0, throwT=0, throwSide=1, inspectT=0;
@@ -656,7 +656,7 @@ function loadEnemyType(url, animMap, opts={}){
     enemyTypes.push({ scene:gltf.scene, anims:gltf.animations, scale:1.85/(box.max.y-box.min.y), minY:box.min.y, animMap, ...opts });
   });
 }
-loadEnemyType('./models/CesiumMan.glb',        {idle:'x', walk:'x', run:'x'});   // plain humanoid → rendered as a solid red SUPERHOT mannequin
+loadEnemyType('./models/CesiumMan.glb',        {idle:'x', walk:'x', run:'x'});   // plain humanoid → rendered as a solid red mannequin
 loadEnemyType('./models/RobotExpressive.glb',  {idle:'Idle', walk:'Walking', run:'Running', punch:'Punch', death:'Death'}, {robot:true}); // blue giant w/ weak points
 
 function setAnim(u, name, fade=0.22){
@@ -950,7 +950,11 @@ function updatePlayer(dt){
   if(keys['KeyD']) wish.add(right);
   if(keys['KeyA']) wish.sub(right);
   if(wish.lengthSq()>0) wish.normalize().multiplyScalar(speed);
-  velocity.x=damp(velocity.x,wish.x,0.0001,dt); velocity.z=damp(velocity.z,wish.z,0.0001,dt);
+  if(onGround){                                                       // ground: snappy start/stop
+    velocity.x=damp(velocity.x,wish.x,0.0001,dt); velocity.z=damp(velocity.z,wish.z,0.0001,dt);
+  } else if(wish.lengthSq()>0){                                        // air: WASD only steers — momentum dominates
+    velocity.x=damp(velocity.x,wish.x,0.25,dt);   velocity.z=damp(velocity.z,wish.z,0.25,dt);
+  }                                                                    // air + no keys: velocity untouched → you keep sailing, never drop like a stone
 
   const pdt = onGround ? dt : dt*Math.max(timeScale,0.25);   // air: full speed with WASD, slow-mo float without (min 25% so you still land)
   const p=camera.position, feetY=p.y-GROUND_Y;
@@ -1011,7 +1015,7 @@ function startGame(){
   bullets.slice().forEach(b=>scene.remove(b)); bullets.length=0;
   fragments.slice().forEach(f=>scene.remove(f)); fragments.length=0;
   knives.slice().forEach(k=>scene.remove(k)); knives.length=0;
-  health=100; kills=0; waveNum=0; waveTimer=0; ammo=MAG; reloading=false; ads=false; setWeapon('pistol');
+  health=100; kills=0; waveNum=0; waveTimer=0; ammo=MAG; reloading=false; ads=false; setWeapon('knife');
   camera.position.set(0, 1.7, 46); camera.rotation.set(0, 0, 0);              // south side, facing the central ziggurat
   velY=0; jumps=0; onGround=true; landDip=0; dblSpin=0;                        // reset jump state
   healthEl.style.width='28px'; document.getElementById('kills').textContent='0'; updateAmmoHUD();
@@ -1027,7 +1031,7 @@ document.getElementById('restart').addEventListener('click', startGame);
 //  Loop
 // ============================================================
 const clock=new THREE.Clock();
-// SUPERHOT time: flows only while pressing WASD (ground OR air); otherwise slowed
+// slow-mo time: flows only while pressing WASD (ground OR air); otherwise slowed
 let timeScale = 1;
 function computeTimeScale(dt){
   const wasd = keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD'];

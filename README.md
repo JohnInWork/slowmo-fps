@@ -1,8 +1,8 @@
-# SUPERHOT FPS — прототип
+# SlowmoFPS — прототип
 
 Шутер от первого лица на Three.js: чёрный мир, белые рёбра полигонов, никакой заливки. Время идёт, только когда идёшь ты — стоишь, и мир почти замирает.
 
-![SUPERHOT FPS](screenshots/gameplay.jpg)
+![SlowmoFPS](screenshots/gameplay.jpg)
 
 ## Что внутри
 
