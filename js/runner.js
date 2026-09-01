@@ -216,7 +216,25 @@ const gunHolder = new THREE.Group(); camera.add(gunHolder);
 const muzzle = new THREE.Object3D(); gunHolder.add(muzzle);
 const flash = new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6), matWhite);
 flash.scale.setScalar(0.001); muzzle.add(flash);
-let recoil=0;
+const knifeHolder = new THREE.Group(); camera.add(knifeHolder);
+let knifeProto=null, knifeView=null;
+let recoil=0, runT=0, inspectT=0, throwT=0;
+const INSPECT_TIME=1.1, THROW_TIME=0.3;
+
+let weapon='pistol';
+try{ if(localStorage.getItem('slowmofps-weapon')==='knife') weapon='knife'; }catch(e){}
+const pickBtn = { pistol:document.getElementById('pick-pistol'), knife:document.getElementById('pick-knife') };
+function setWeapon(w){
+  weapon=w;
+  try{ localStorage.setItem('slowmofps-weapon', w); }catch(e){}
+  gunHolder.visible   = w==='pistol';
+  knifeHolder.visible = w==='knife';
+  pickBtn.pistol.classList.toggle('on', w==='pistol');
+  pickBtn.knife.classList.toggle('on', w==='knife');
+}
+pickBtn.pistol.addEventListener('click', ()=>setWeapon('pistol'));
+pickBtn.knife.addEventListener('click', ()=>setWeapon('knife'));
+setWeapon(weapon);
 
 const jobs=[];
 const gltfLoader=new GLTFLoader();
@@ -233,6 +251,18 @@ jobs.push(gltfLoader.loadAsync('./models/pistol.glb').then(gltf=>{
   gunHolder.add(m);
   muzzle.position.set(0,0.02,-0.3);
 }).catch(e=>console.warn('пистолет не загрузился', e)));
+
+jobs.push(gltfLoader.loadAsync('./models/knife_kabar.glb').then(gltf=>{
+  const m=gltf.scene;
+  m.traverse(o=>{ if(o.isMesh){ o.material=matFill; edged(o); o.frustumCulled=false; } });
+  const box=new THREE.Box3().setFromObject(m), size=new THREE.Vector3(); box.getSize(size);
+  const s=0.32/Math.max(size.x,size.y,size.z); m.scale.setScalar(s);
+  m.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(s));
+  const sz=[size.x*s,size.y*s,size.z*s], L=sz.indexOf(Math.max(...sz));
+  if(L===0) m.rotation.y=PI/2; else if(L===1) m.rotation.x=-PI/2;   // лезвие вдоль Z
+  knifeProto=new THREE.Group(); knifeProto.add(m);
+  knifeView=knifeProto.clone(true); knifeHolder.add(knifeView);
+}).catch(e=>console.warn('нож не загрузился', e)));
 
 // гигант — та же модель робота, что была в оригинале, только синим каркасом
 jobs.push(gltfLoader.loadAsync('./models/RobotExpressive.glb').then(gltf=>{
@@ -450,11 +480,34 @@ function hurt(){
 // выстрел в точку экрана: по лучу ищем ближайшую мишень с запасом по радиусу
 const rc=new THREE.Raycaster();
 const ndc=new THREE.Vector2();
+function aimPoint(o, v=new THREE.Vector3()){
+  return v.set(o.position.x, o.position.y + AIM_Y[o.userData.kind], o.position.z);
+}
+// урон отделён от выстрела: пуля попадает сразу, а брошенный нож — когда долетит
+function applyHit(o, p){
+  if(o.userData.dead) return;
+  const u=o.userData;
+  u.hp--;
+  if(u.kind==='cell'){                               // капсула времени: возвращает шкалу
+    fuel=clamp(fuel+CELL_GAIN, 0, 1);
+    explode(p, 0xffffff, 0.7); sparks(p, 12, matWhite);
+    slowBtn.classList.remove('gain'); void slowBtn.offsetWidth; slowBtn.classList.add('gain');
+    release(o);
+  } else if(u.hp > 0){                               // гигант ещё держится — гасим одно ядро
+    if(u.cores && u.cores[u.hp]) u.cores[u.hp].visible=false;
+    sparks(p, 10, matBlue); addShake(0.07); hitstop=0.03;
+  } else {
+    const blue = u.kind==='robot';
+    explode(p, blue?0x3a8bff:0xff2626, blue?1.6:0.85);
+    sparks(p, blue?18:12, blue?matBlue:matRed);
+    release(o);
+    kills++; el.kills.firstChild.textContent=kills;
+    hitstop=blue?0.08:0.05;
+  }
+}
+
 function shoot(px, py){
   if(!alive) return;
-  recoil=1; addShake(0.05); addFlash(0.03);
-  flash.scale.setScalar(rand(0.9,1.4)); flash.rotation.z=rand(0,PI);
-
   el.tap.style.left=px+'px'; el.tap.style.top=py+'px';
   el.tap.classList.remove('on'); void el.tap.offsetWidth; el.tap.classList.add('on');
 
@@ -472,27 +525,46 @@ function shoot(px, py){
     const closest=rc.ray.origin.clone().addScaledVector(rc.ray.direction,t);
     if(closest.distanceTo(c) < AIM_R[k] + t*0.012){ hit=o; hitT=t; hitP=c.clone(); }
   }                                                  // радиус щедрый и растёт с дальностью: палец толще пикселя
-  if(!hit){ tracer(rc.ray.origin.clone().addScaledVector(rc.ray.direction, 90)); return; }
+  const far = rc.ray.origin.clone().addScaledVector(rc.ray.direction, 90);
 
-  tracer(hitP);
-  const u=hit.userData;
-  u.hp--;
-
-  if(u.kind==='cell'){                               // капсула времени: возвращает шкалу
-    fuel=clamp(fuel+CELL_GAIN, 0, 1);
-    explode(hitP, 0xffffff, 0.7); sparks(hitP, 12, matWhite);
-    slowBtn.classList.remove('gain'); void slowBtn.offsetWidth; slowBtn.classList.add('gain');
-    release(hit);
-  } else if(u.hp > 0){                               // гигант ещё держится — гасим одно ядро
-    if(u.cores && u.cores[u.hp]) u.cores[u.hp].visible=false;
-    sparks(hitP, 10, matBlue); addShake(0.07); hitstop=0.03;
+  if(weapon==='pistol'){
+    recoil=1; addShake(0.05); addFlash(0.03);
+    flash.scale.setScalar(rand(0.9,1.4)); flash.rotation.z=rand(0,PI);
+    tracer(hit ? hitP : far);
+    if(hit) applyHit(hit, hitP);
   } else {
-    const blue = u.kind==='robot';
-    explode(hitP, blue?0x3a8bff:0xff2626, blue?1.6:0.85);
-    sparks(hitP, blue?18:12, blue?matBlue:matRed);
-    release(hit);
-    kills++; el.kills.firstChild.textContent=kills;
-    hitstop=blue?0.08:0.05;
+    throwT=THROW_TIME; addShake(0.03);
+    launchKnife(hit ? hitP : far, hit);              // нож летит и бьёт по прилёте
+  }
+}
+
+// ---------- брошенные ножи ----------
+const flying=[];
+let knifePool=null;
+function launchKnife(to, target){
+  if(!knifePool){ if(target) applyHit(target, to); return; }
+  const k=knifePool.take();
+  if(!k){ if(target) applyHit(target, to); return; }
+  const from=new THREE.Vector3(); knifeHolder.getWorldPosition(from);
+  k.position.copy(from);
+  k.userData={ from:from.clone(), to:to.clone(), target, t:0,
+               dur:clamp(from.distanceTo(to)/52, 0.12, 0.9) };
+  flying.push(k);
+}
+function updateFlying(wdt){
+  const dest=new THREE.Vector3();
+  for(let i=flying.length-1;i>=0;i--){
+    const k=flying[i], u=k.userData;
+    u.t += wdt/u.dur;
+    if(u.target && !u.target.userData.dead) aimPoint(u.target, dest);   // цель едет — доводим по ней
+    else dest.copy(u.to);
+    k.position.lerpVectors(u.from, dest, Math.min(u.t,1));
+    k.lookAt(dest); k.rotateX(u.t*26);
+    if(u.t>=1){
+      if(u.target && !u.target.userData.dead) applyHit(u.target, dest);
+      else sparks(dest, 5, matWhite);
+      knifePool.put(k); flying.splice(i,1);
+    }
   }
 }
 
@@ -500,25 +572,31 @@ function shoot(px, py){
 //  Управление: свайпы, тап, зажатие
 // ============================================================
 const canvas=renderer.domElement;
-let ptr=null;
+const HOLD_MS=260;                                 // дольше этого — не выстрел, а осмотр оружия
+let ptr=null, holdTimer=null;
 canvas.addEventListener('pointerdown', e=>{
   if(!alive) return;
   canvas.setPointerCapture?.(e.pointerId);
-  ptr={ id:e.pointerId, x:e.clientX, y:e.clientY, t:performance.now(), swiped:false };
+  ptr={ id:e.pointerId, x:e.clientX, y:e.clientY, t:performance.now(), swiped:false, inspected:false };
+  clearTimeout(holdTimer);
+  holdTimer=setTimeout(()=>{
+    if(ptr && !ptr.swiped && throwT<=0){ ptr.inspected=true; inspectT=INSPECT_TIME; }
+  }, HOLD_MS);
 });
 canvas.addEventListener('pointermove', e=>{
   if(!ptr || e.pointerId!==ptr.id) return;
   const dx=e.clientX-ptr.x, dy=e.clientY-ptr.y;
   if(ptr.swiped) return;
-  if(Math.abs(dx)>26 && Math.abs(dx)>Math.abs(dy)){ setLane(Math.sign(dx)); ptr.swiped=true; }
-  else if(dy<-42 && Math.abs(dy)>Math.abs(dx)){ jump(); ptr.swiped=true; }
+  if(Math.abs(dx)>26 && Math.abs(dx)>Math.abs(dy)){ setLane(Math.sign(dx)); ptr.swiped=true; clearTimeout(holdTimer); }
+  else if(dy<-42 && Math.abs(dy)>Math.abs(dx)){ jump(); ptr.swiped=true; clearTimeout(holdTimer); }
 });
 canvas.addEventListener('pointerup', e=>{
   if(!ptr || e.pointerId!==ptr.id) return;
-  if(!ptr.swiped) shoot(e.clientX, e.clientY);     // касание без свайпа — выстрел
+  clearTimeout(holdTimer);
+  if(!ptr.swiped && !ptr.inspected) shoot(e.clientX, e.clientY);   // короткое касание — выстрел
   ptr=null;
 });
-canvas.addEventListener('pointercancel', ()=>{ ptr=null; });
+canvas.addEventListener('pointercancel', ()=>{ clearTimeout(holdTimer); ptr=null; });
 
 // ---------- кнопка времени: переключатель, а не «держать» — палец остаётся свободен ----------
 function setSlow(on){
@@ -598,33 +676,85 @@ function updateWorld(dt, wdt){
   }
 }
 
-function updatePlayer(dt){
-  laneX = damp(laneX, LANES[lane], 0.00002, dt);
-  laneVis = damp(laneVis, LANES[lane], 0.0002, dt);        // визуальный крен отстаёт от позиции
+function updatePlayer(dt, wdt){
+  laneX = damp(laneX, LANES[lane], 0.00002, dt);            // смена полосы — управление, остаётся резкой
+  laneVis = damp(laneVis, LANES[lane], 0.0002, dt);         // визуальный крен отстаёт от позиции
 
+  // прыжок живёт по времени мира: в замедлении зависаешь в воздухе, а дуга
+  // относительно трассы остаётся той же — иначе перепрыгнуть в слоу-мо невозможно
   if(!onGround || jumpY>0){
-    velY -= GRAVITY*dt;
-    jumpY += velY*dt;
+    velY -= GRAVITY*wdt;
+    jumpY += velY*wdt;
     if(jumpY<=0){ jumpY=0; velY=0; onGround=true; }
   }
 
-  const bob = onGround ? Math.sin(clock.getElapsedTime()*speed*0.55)*0.035 : 0;
+  const bob = onGround ? Math.sin(runT)*0.035 : 0;
   camera.position.set(laneX, PLAYER_Y + jumpY + bob, 0);
   // смотрим чуть вниз — так трасса занимает кадр, а не жмётся к горизонту
   camera.rotation.set(-0.22 - jumpY*0.012, 0, (laneX-laneVis)*0.16);
   if(iframe>0) camera.position.x += Math.sin(clock.getElapsedTime()*60)*0.02*iframe;
 }
 
-function updateGun(dt){
-  const px=0.26, py=-0.32-recoil*0.05, pz=-0.7-recoil*0.04;   // держим в кадре: портрет узкий
-  gunHolder.position.set(
-    damp(gunHolder.position.x,px,0.0001,dt),
-    damp(gunHolder.position.y,py,0.0001,dt),
-    damp(gunHolder.position.z,pz,0.0001,dt));
-  gunHolder.rotation.set(
-    damp(gunHolder.rotation.x, 0.05-recoil*0.5, 0.0001, dt),
-    damp(gunHolder.rotation.y, 0.06, 0.0001, dt),
-    damp(gunHolder.rotation.z, -0.05+recoil*0.3, 0.0001, dt));
+function poseTo(o, px,py,pz, rx,ry,rz, dt, l=0.0001){
+  o.position.set(damp(o.position.x,px,l,dt), damp(o.position.y,py,l,dt), damp(o.position.z,pz,l,dt));
+  o.rotation.set(damp(o.rotation.x,rx,l,dt), damp(o.rotation.y,ry,l,dt), damp(o.rotation.z,rz,l,dt));
+}
+
+function updateGun(dt, wdt){
+  // цикл бега привязан к пройденному пути, а не к секундам: в замедлении рука
+  // качается медленнее вместе с миром, на разгоне — чаще
+  runT += wdt*speed*0.34;
+  if(inspectT>0) inspectT-=dt;
+  if(throwT>0)   throwT-=dt;
+
+  const run  = alive && onGround;
+  const bobY = run ? Math.abs(Math.sin(runT))*0.024 : 0;
+  const bobX = run ? Math.sin(runT*0.5)*0.018 : 0;
+  const roll = run ? Math.sin(runT*0.5)*0.045 : 0;
+  const air  = clamp(-velY*0.005, -0.06, 0.06);          // инерция при прыжке и падении
+
+  if(weapon==='pistol'){
+    let px=0.26+bobX, py=-0.32+bobY+air-recoil*0.05, pz=-0.7-recoil*0.04;
+    let rx=0.05-recoil*0.5, ry=0.06+bobX*0.7, rz=-0.05+roll+recoil*0.3;
+    if(inspectT>0){                                      // осмотр: поднести к глазам и повернуть
+      const p=1-inspectT/INSPECT_TIME, q=Math.sin(p*PI);
+      px=lerp(px,0.06,q); py=lerp(py,-0.15,q); pz=lerp(pz,-0.4,q);
+      rx=lerp(rx,-0.22,q)+Math.sin(p*PI*2)*0.22*q;
+      ry=lerp(ry,Math.sin(p*PI*3)*1.7,q);
+      rz=lerp(rz,0.45,q);
+    }
+    poseTo(gunHolder, px,py,pz, rx,ry,rz, dt);
+  } else {
+    let px=0.2+bobX, py=-0.26+bobY+air, pz=-0.52;
+    let rx=-0.3, ry=0.3, rz=0.4+roll;
+    if(throwT>0){                                        // замах и бросок через себя
+      const p=1-throwT/THROW_TIME, arc=Math.sin(p*PI), fwd=Math.sin(Math.min(p*1.35,1)*PI*0.5);
+      px += 0.3*(1-p*p); py += arc*0.1-p*0.04; pz += -fwd*0.32;
+      ry += 1.1*(1-p)-0.3; rz += -arc*0.9; rx += arc*0.65;
+    } else if(inspectT>0){                               // осмотр: нож выносится к центру
+      const p=1-inspectT/INSPECT_TIME, q=Math.sin(p*PI);
+      px=lerp(px,0.02,q); py=lerp(py,-0.06,q); pz=lerp(pz,-0.5,q);
+      rx=lerp(rx,0,q); ry=lerp(ry,0,q); rz=lerp(rz,0,q);
+    }
+    poseTo(knifeHolder, px,py,pz, rx,ry,rz, dt, 0.00006);
+
+    if(knifeView){                                       // сама железка крутится в руке
+      if(throwT>0){
+        const p=1-throwT/THROW_TIME;
+        knifeView.rotation.x = p*p*(3-2*p)*PI*2;
+        knifeView.rotation.z = damp(knifeView.rotation.z,0,0.0001,dt);
+      } else if(inspectT>0){
+        const p=1-inspectT/INSPECT_TIME, e=p*p*(3-2*p);
+        knifeView.rotation.x = e*PI*6;                    // три оборота через себя
+        knifeView.rotation.y = Math.sin(p*PI)*PI;
+        knifeView.rotation.z = Math.sin(p*PI*2)*0.55;
+      } else {
+        knifeView.rotation.x = damp(knifeView.rotation.x,0,0.0006,dt);
+        knifeView.rotation.y = damp(knifeView.rotation.y,0,0.0006,dt);
+        knifeView.rotation.z = Math.sin(runT*0.5)*0.12;
+      }
+    }
+  }
   recoil=damp(recoil,0,0.0001,dt);
   flash.scale.setScalar(lerp(flash.scale.x,0.001,1-Math.pow(0.0001,dt)));
   flash.rotation.z += dt*20;
@@ -679,10 +809,12 @@ function startRun(){
   fragments.slice().forEach(f=>scene.remove(f)); fragments.length=0;
   explosions.slice().forEach(e=>scene.remove(e.o)); explosions.length=0;
   tracers.slice().forEach(l=>scene.remove(l)); tracers.length=0;
+  flying.slice().forEach(k=>knifePool && knifePool.put(k)); flying.length=0;
 
   lane=1; laneX=0; laneVis=0; jumpY=0; velY=0; onGround=true;
   speed=START_SPEED; dist=0; kills=0; hp=3; iframe=0;
   timeScale=1; fuel=1; nextSpawnAt=40; worldT=0; setSlow(false);
+  inspectT=0; throwT=0; runT=0;
 
   el.hp.forEach(p=>p.classList.remove('gone'));
   el.kills.firstChild.textContent='0';
@@ -726,8 +858,8 @@ function animate(){
   if(hitstop>0) hitstop-=dt;
   const wdt = dt*timeScale*(hitstop>0?0.15:1);
 
-  if(alive){ updateWorld(dt, wdt); updatePlayer(dt); updateHud(dt); }
-  updateGun(dt); updateFx(wdt); updatePost(dt);
+  if(alive){ updateWorld(dt, wdt); updatePlayer(dt, wdt); updateHud(dt); }
+  updateGun(dt, wdt); updateFlying(wdt); updateFx(wdt); updatePost(dt);
   composer.render();
 }
 animate();
@@ -755,6 +887,7 @@ checkOrientation();
 
 Promise.all(jobs).then(()=>{
   if(robotProto && robotAnims) pools.robot = makePool(makeRobot, 3);   // пул собираем, когда модель готова
+  if(knifeProto) knifePool = makePool(()=>knifeProto.clone(true), 8);
   startBtn.disabled=false;
   startBtn.textContent='Играть';
 });

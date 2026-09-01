@@ -93,7 +93,21 @@
          cursor:pointer; pointer-events:auto; transition:transform .1s; }
   .btn:active { transform:scale(.96); }
   #over .btn { background:#ff1e1e; color:#fff; }
-  .keys { margin-top:42px; font-size:13px; letter-spacing:2px; opacity:.55; line-height:2.1; }
+  /* выбор оружия перед забегом */
+  .pick { margin-top:30px; display:flex; gap:16px; }
+  .wbtn {
+    width:76px; height:64px; padding:0; background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.2); border-radius:10px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:auto; transition:background .14s, border-color .14s, transform .1s;
+  }
+  .wbtn svg { width:42px; height:42px; fill:#fff; opacity:.5; transition:fill .14s, opacity .14s; }
+  .wbtn.on { background:#fff; border-color:#fff; }
+  .wbtn.on svg { fill:#040406; opacity:1; }
+  .wbtn:active { transform:scale(.95); }
+  .picklab { margin-top:12px; font-size:11px; letter-spacing:4px; opacity:.4; text-transform:uppercase; }
+
+  .keys { margin-top:34px; font-size:13px; letter-spacing:2px; opacity:.55; line-height:2.1; }
   .keys b { color:#fff; font-weight:700; opacity:.9; }
   .final { margin-top:22px; font-size:20px; letter-spacing:3px; }
   .final b { font-size:56px; font-weight:900; display:block; letter-spacing:1px; margin-bottom:4px; }
@@ -122,11 +136,20 @@
 <div class="screen" id="menu">
   <div class="title">SLOWMO<span>FPS</span></div>
   <div class="sub">runner</div>
+  <div class="pick">
+    <button class="wbtn on" id="pick-pistol" aria-label="пистолет">
+      <svg viewBox="0 0 24 24"><path d="M4 5h18v4.5H10L8 19H3.5l2-9.5H4V5z"></path></svg>
+    </button>
+    <button class="wbtn" id="pick-knife" aria-label="нож">
+      <svg viewBox="0 0 24 24"><path d="M20.4 2.2c.5-.5 1.3.3.9.9l-8.1 9.6-2.3-2.3 9.5-8.2zM9.6 11.3l3.1 3.1-5.2 5.9c-.6.7-1.7.7-2.4 0l-1.4-1.4c-.7-.7-.7-1.8 0-2.4l5.9-5.2z"></path></svg>
+    </button>
+  </div>
+  <div class="picklab">оружие</div>
   <button class="btn" id="start">Играть</button>
   <div class="keys">
     <b>свайп ◀ ▶</b> сменить полосу<br>
     <b>свайп ▲</b> прыжок<br>
-    <b>тап</b> выстрел<br>
+    <b>тап</b> выстрел &nbsp;·&nbsp; <b>зажать</b> осмотр оружия<br>
     <b>кнопка внизу</b> замедлить время<br>
     <b>синие капсулы</b> сбей — время вернётся
   </div>
