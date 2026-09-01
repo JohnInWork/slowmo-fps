@@ -218,7 +218,7 @@ const flash = new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6), matWhite);
 flash.scale.setScalar(0.001); muzzle.add(flash);
 const knifeHolder = new THREE.Group(); camera.add(knifeHolder);
 let knifeProto=null, knifeView=null;
-let recoil=0, runT=0, inspectT=0, throwT=0, idleShowT=rand(8,14);
+let recoil=0, runT=0, inspectT=0, throwT=0, idleShowT=rand(5,9);
 const INSPECT_TIME=1.1, THROW_TIME=0.3;
 // поза ножа в покое: лезвие модели идёт по +Z, то есть «от камеры» — без поворота
 // по X мы смотрим на него с торца и видим бесформенный комок
@@ -449,6 +449,7 @@ let lane=1, laneX=0, laneVis=0;
 let jumpY=0, velY=0, onGround=true;
 let speed=START_SPEED, dist=0, kills=0, hp=3, iframe=0;
 let timeScale=1, slowWanted=false, fuel=1;
+let dying=false, deathT=0, deathDist=0;
 let best=+(localStorage.getItem(BEST_KEY)||0);
 
 const slowBtn = document.getElementById('slowbtn');
@@ -477,7 +478,21 @@ function hurt(){
   hp--; iframe=IFRAMES;
   el.hp.forEach((p,i)=>p.classList.toggle('gone', i>=hp));
   el.flash.style.opacity=0.6; addShake(0.5); addFlash(0.18);
-  if(hp<=0) gameOver();
+  if(hp<=0) die();
+}
+
+// смерть — не мгновенный чёрный экран: взрыв, завал камеры, мир тормозит
+const DEATH_TIME=1.7;
+function die(){
+  if(dying) return;
+  alive=false; dying=true; deathT=DEATH_TIME; deathDist=Math.floor(dist);
+  setSlow(false);
+  const p=new THREE.Vector3(laneX, PLAYER_Y-0.2, -1.6);
+  explode(p, 0xff2626, 2.4);
+  sparks(p, 30, matRed);
+  for(let i=0;i<10;i++) sparks(new THREE.Vector3(laneX+rand(-1.5,1.5), rand(0.3,2.4), rand(-4,-1)), 3, matWhite);
+  addShake(1); addFlash(0.3); hitstop=0.14;
+  el.flash.style.opacity=0.6;                     // не заливаем кадр целиком: взрыв должно быть видно
 }
 
 // выстрел в точку экрана: по лучу ищем ближайшую мишень с запасом по радиусу
@@ -704,6 +719,15 @@ function poseTo(o, px,py,pz, rx,ry,rz, dt, l=0.0001){
   o.rotation.set(damp(o.rotation.x,rx,l,dt), damp(o.rotation.y,ry,l,dt), damp(o.rotation.z,rz,l,dt));
 }
 
+// падение: камера оседает к земле и заваливается набок, красная вспышка гаснет
+function updateDeath(){
+  const k = 1 - clamp(deathT/DEATH_TIME, 0, 1);
+  const e = k*k*(3-2*k);
+  camera.position.set(laneX, lerp(PLAYER_Y, 0.42, e), 0);
+  camera.rotation.set(-0.22 - e*0.5, 0, e*0.95);
+  el.flash.style.opacity = String(Math.max(0, 0.6*(1-e)*(1-e)));
+}
+
 function updateGun(dt, wdt){
   // цикл бега привязан к пройденному пути, а не к секундам: в замедлении рука
   // качается медленнее вместе с миром, на разгоне — чаще
@@ -716,9 +740,13 @@ function updateGun(dt, wdt){
   if(alive){
     idleShowT -= dt;
     if(idleShowT<=0){
-      const busy = active.some(o=>SHOOTABLE[o.userData.kind] && o.position.z > -55);
-      if(!busy && inspectT<=0 && throwT<=0 && recoil<0.05 && onGround) inspectT=INSPECT_TIME;
-      idleShowT = rand(9,17);
+      // никакой проверки «а не занят ли игрок»: на трассе всегда что-то есть рядом,
+      // и с ней анимация не запускалась вообще ни разу. Выстрел её обрывает —
+      // этого хватает, чтобы она не мешала
+      const busy = active.some(o=>SHOOTABLE[o.userData.kind] && o.position.z > -10);
+      const free = !busy && inspectT<=0 && throwT<=0 && recoil<0.05 && onGround;
+      if(free) inspectT=INSPECT_TIME;
+      idleShowT = free ? rand(7,13) : rand(0.8,1.6);    // помешали — пробуем снова скоро
     }
   }
 
@@ -831,7 +859,8 @@ function startRun(){
   lane=1; laneX=0; laneVis=0; jumpY=0; velY=0; onGround=true;
   speed=START_SPEED; dist=0; kills=0; hp=3; iframe=0;
   timeScale=1; fuel=1; nextSpawnAt=40; worldT=0; setSlow(false);
-  inspectT=0; throwT=0; runT=0; idleShowT=rand(8,14);
+  inspectT=0; throwT=0; runT=0; idleShowT=rand(5,9);
+  dying=false; deathT=0; el.flash.style.opacity=0;
 
   el.hp.forEach(p=>p.classList.remove('gone'));
   el.kills.firstChild.textContent='0';
@@ -840,9 +869,8 @@ function startRun(){
   el.over.style.display='none';
   alive=true;
 }
-function gameOver(){
-  alive=false;
-  const d=Math.floor(dist);
+function showOver(){
+  const d=deathDist;
   if(d>best){ best=d; try{ localStorage.setItem(BEST_KEY,String(best)); }catch(e){} }
   el.finaldist.textContent=d;
   el.best.textContent='рекорд: '+best+' · убито: '+kills;
@@ -868,6 +896,11 @@ function animate(){
     fuel = clamp(fuel + (wantSlow ? -dt*SLOW_DRAIN : dt*SLOW_TRICKLE), 0, 1);
     speed = Math.min(MAX_SPEED, speed + SPEED_RAMP*dt);
     if(iframe>0) iframe-=dt;
+  } else if(dying){
+    deathT -= dt;
+    speed = Math.max(0, speed - 22*dt);                  // трасса тормозит до полной остановки
+    timeScale = damp(timeScale, 0.1, 0.0008, dt);        // и уходит в глубокое замедление
+    if(deathT<=0){ dying=false; showOver(); }
   } else {
     timeScale = damp(timeScale, 1, 0.0005, dt);
   }
@@ -876,6 +909,7 @@ function animate(){
   const wdt = dt*timeScale*(hitstop>0?0.15:1);
 
   if(alive){ updateWorld(dt, wdt); updatePlayer(dt, wdt); updateHud(dt); }
+  else if(dying){ updateWorld(dt, wdt); updateDeath(); }
   updateGun(dt, wdt); updateFlying(wdt); updateFx(wdt); updatePost(dt);
   composer.render();
 }

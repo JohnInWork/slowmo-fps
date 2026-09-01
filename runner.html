@@ -84,6 +84,9 @@
     padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 20px);
   }
   #over, #rotate { display:none; }
+  /* экран смерти не выпрыгивает, а проявляется поверх догорающей сцены */
+  #over { animation:overin .55s ease-out; }
+  @keyframes overin { from { opacity:0; } to { opacity:1; } }
   .title { font-size:clamp(44px,15vw,86px); font-weight:900; letter-spacing:6px; line-height:1;
            text-shadow:0 0 30px rgba(255,255,255,.35); }
   .title span { color:#ff2626; text-shadow:0 0 40px rgba(255,38,38,.7); }
