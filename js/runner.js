@@ -27,9 +27,9 @@ const SPAWN_Z    = -125, DESPAWN_Z = 9;
 const PLAYER_Y   = 1.55;
 const GRAVITY    = 44, JUMP_V = 13.4;    // прыжок ~2 м, висишь ~0.6 с
 const SLOW_TS    = 0.22;                 // во сколько замедляется время
-const SLOW_DRAIN = 0.5;                  // шкала на полном заряде даёт ~2 с замедления
-const SLOW_TRICKLE = 0.06;               // сама почти не растёт: время добывают капсулами
-const CELL_GAIN  = 0.34;
+const SLOW_DRAIN = 0.13;                 // полной шкалы хватает почти на 8 секунд замедления
+const SLOW_TRICKLE = 0.06;               // сама растёт медленно: время добывают капсулами
+const CELL_GAIN  = 0.34;                 // капсула — это ещё ~2.6 с
 const IFRAMES    = 1.25;                 // неуязвимость после удара
 const BEST_KEY   = 'slowmofps-runner-best';
 
