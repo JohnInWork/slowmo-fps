@@ -4,6 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 
 // ============================================================
 //  SlowmoFPS Runner · портретный мобильный раннер
@@ -26,6 +27,9 @@ const SPAWN_Z    = -125, DESPAWN_Z = 9;
 const PLAYER_Y   = 1.55;
 const GRAVITY    = 44, JUMP_V = 13.4;    // прыжок ~2 м, висишь ~0.6 с
 const SLOW_TS    = 0.22;                 // во сколько замедляется время
+const SLOW_DRAIN = 0.5;                  // шкала на полном заряде даёт ~2 с замедления
+const SLOW_TRICKLE = 0.06;               // сама почти не растёт: время добывают капсулами
+const CELL_GAIN  = 0.34;
 const IFRAMES    = 1.25;                 // неуязвимость после удара
 const BEST_KEY   = 'slowmofps-runner-best';
 
@@ -230,6 +234,20 @@ jobs.push(gltfLoader.loadAsync('./models/pistol.glb').then(gltf=>{
   muzzle.position.set(0,0.02,-0.3);
 }).catch(e=>console.warn('пистолет не загрузился', e)));
 
+// гигант — та же модель робота, что была в оригинале, только синим каркасом
+jobs.push(gltfLoader.loadAsync('./models/RobotExpressive.glb').then(gltf=>{
+  const s=gltf.scene;
+  scene.add(s); s.updateMatrixWorld(true);                 // чтобы посчитались границы скина
+  const box=new THREE.Box3().setFromObject(s,true);
+  scene.remove(s);
+  const h=Math.max(0.001, box.max.y-box.min.y), w=Math.max(0.001, box.max.x-box.min.x);
+  const sy=3.8/h;
+  // вширь тянем до двух полос: силуэт должен совпадать с зоной поражения, иначе
+  // игрок ловит удар, считая, что проскочил мимо
+  robotFit={ y:sy, x:Math.min(4.6/w, sy*2.4), minY:box.min.y };
+  robotProto=s; robotAnims=gltf.animations;
+}).catch(e=>console.warn('робот не загрузился', e)));
+
 // ============================================================
 //  Препятствия и враги
 // ============================================================
@@ -248,11 +266,35 @@ function makeMannequin(){
   g.userData.limbs=[legL,legR,armL,armR];
   return g;
 }
-function makeDrone(){
+// капсула времени: не враг, столкновение безвредно — но сбитая возвращает шкалу
+function makeCell(){
   const g=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.OctahedronGeometry(0.52,0), wireBlue);
-  const core=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,8), matRed);
-  g.add(body,core); g.userData.body=body;
+  const shell=new THREE.Mesh(new THREE.OctahedronGeometry(0.55,0), wireBlue);
+  const core=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,10), matWhite);
+  g.add(shell,core); g.userData.core=core;
+  return g;
+}
+
+// гигант: перекрывает две полосы, снимается с трёх попаданий.
+// три красных ядра на груди — они же индикатор оставшегося здоровья
+let robotProto=null, robotAnims=null, robotFit=null;
+function makeRobot(){
+  const g=new THREE.Group();
+  const m=cloneSkeleton(robotProto);
+  m.scale.set(robotFit.x, robotFit.y, robotFit.y);
+  m.position.y=-robotFit.minY*robotFit.y;
+  m.traverse(o=>{ if(o.isMesh){ o.material=wireBlue; o.frustumCulled=false; } });
+  g.add(m);
+  const mixer=new THREE.AnimationMixer(m);
+  const clip=THREE.AnimationClip.findByName(robotAnims,'Walking')||robotAnims[0];
+  if(clip) mixer.clipAction(clip).play();
+  const cores=[];
+  for(let i=0;i<3;i++){
+    const c=new THREE.Mesh(new THREE.SphereGeometry(0.21,10,10), matRed);
+    c.position.set((i-1)*0.6, 2.45, 0.6);
+    g.add(c); cores.push(c);
+  }
+  g.userData.mixer=mixer; g.userData.cores=cores;
   return g;
 }
 function makeBarrier(){
@@ -278,18 +320,24 @@ function makePool(factory, n){
 }
 const pools = {
   mannequin: makePool(makeMannequin, 14),
-  drone:     makePool(makeDrone, 10),
+  cell:      makePool(makeCell, 10),
   barrier:   makePool(makeBarrier, 10),
   low:       makePool(makeLowBar, 8),
-};
-const SHOOTABLE = { mannequin:true, drone:true, barrier:false, low:false };
+};                                        // пул гигантов собирается после загрузки модели
+const SHOOTABLE = { mannequin:true, cell:true, robot:true, barrier:false, low:false };
+const HP        = { mannequin:1, cell:1, robot:3, barrier:0, low:0 };
+const AIM_Y     = { mannequin:1.15, cell:0, robot:2.4 };     // куда целиться по высоте
+const AIM_R     = { mannequin:1.0, cell:0.9, robot:1.8 };    // радиус попадания
+const HALF_W    = { mannequin:LANE_HALF, cell:0, robot:2.3, barrier:LANE_HALF, low:LANE_HALF };
 
-function spawn(kind, lane, z){
-  const o = pools[kind].take(); if(!o) return null;
-  o.position.set(LANES[lane], kind==='drone' ? 1.75 : 0, z);
+function spawn(kind, lane, z, xOverride){
+  const pool=pools[kind]; if(!pool) return null;
+  const o = pool.take(); if(!o) return null;
+  o.position.set(xOverride!=null?xOverride:LANES[lane], kind==='cell' ? 1.7 : 0, z);
   o.rotation.set(0,0,0);
-  o.userData.kind=kind; o.userData.lane=lane; o.userData.dead=false;
+  o.userData.kind=kind; o.userData.lane=lane; o.userData.dead=false; o.userData.hp=HP[kind];
   o.userData.bob=rand(0,PI*2); o.userData.gait=rand(0,PI*2);
+  if(o.userData.cores) o.userData.cores.forEach(c=>c.visible=true);
   active.push(o);
   return o;
 }
@@ -307,21 +355,28 @@ function planSpawns(dist){
   nextSpawnAt = dist + gap;
 
   const freeLane = (Math.random()*3)|0;              // эта полоса остаётся пустой
-  const lanes=[0,1,2].filter(l=>l!==freeLane);
   const hard = Math.min(dist/900, 1);                // 0..1 — общая злость трассы
 
-  if(Math.random() < 0.22 + hard*0.2){               // одиночная низкая перекладина через всю ширину
-    for(const l of [0,1,2]) spawn('low', l, SPAWN_Z);
+  // гигант закрывает две полосы: проход остаётся ровно один, и в нём висит капсула
+  if(pools.robot && dist > 240 && Math.random() < 0.10 + hard*0.15){
+    const pair = Math.random()<0.5 ? 0 : 1;          // полосы 0-1 или 1-2
+    spawn('robot', pair, SPAWN_Z, (LANES[pair]+LANES[pair+1])/2);
+    spawn('cell', pair===0 ? 2 : 0, SPAWN_Z - rand(8,20));
     return;
   }
-  for(const l of lanes){
+  if(Math.random() < 0.2 + hard*0.18){               // низкая перекладина через всю ширину
+    for(const l of [0,1,2]) spawn('low', l, SPAWN_Z);
+    if(Math.random()<0.5) spawn('cell', (Math.random()*3)|0, SPAWN_Z - rand(10,22));
+    return;
+  }
+  for(const l of [0,1,2].filter(l=>l!==freeLane)){
     const r=Math.random();
-    if(r < 0.42)      spawn('mannequin', l, SPAWN_Z + rand(-6,6));
-    else if(r < 0.68) spawn('drone', l, SPAWN_Z + rand(-6,6));
-    else if(r < 0.88) spawn('barrier', l, SPAWN_Z + rand(-6,6));
+    if(r < 0.5)       spawn('mannequin', l, SPAWN_Z + rand(-6,6));
+    else if(r < 0.82) spawn('barrier', l, SPAWN_Z + rand(-6,6));
     else              spawn('low', l, SPAWN_Z + rand(-6,6));
     if(Math.random() > 0.35 + hard*0.4) break;       // на старте чаще занята одна полоса, дальше — две
   }
+  if(Math.random() < 0.6) spawn('cell', freeLane, SPAWN_Z + rand(-14,14));
 }
 
 // ============================================================
@@ -363,9 +418,12 @@ let speed=START_SPEED, dist=0, kills=0, hp=3, iframe=0;
 let timeScale=1, slowWanted=false, fuel=1;
 let best=+(localStorage.getItem(BEST_KEY)||0);
 
+const slowBtn = document.getElementById('slowbtn');
+const fuelBar = slowBtn.querySelector('.bar');
+const RING = 2*PI*44;                                   // длина окружности шкалы на кнопке
 const el = {
   dist:document.getElementById('dist'), kills:document.getElementById('kills'),
-  hp:[...document.querySelectorAll('#hp i')], fuel:document.getElementById('fuel'),
+  hp:[...document.querySelectorAll('#hp i')],
   tap:document.getElementById('tapmark'), flash:document.getElementById('hitflash'),
   tint:document.getElementById('slowtint'), menu:document.getElementById('menu'),
   over:document.getElementById('over'), rotate:document.getElementById('rotate'),
@@ -403,28 +461,38 @@ function shoot(px, py){
   ndc.set((px/innerWidth)*2-1, -(py/innerHeight)*2+1);
   rc.setFromCamera(ndc, camera);
 
-  let hit=null, hitT=Infinity;
+  let hit=null, hitT=Infinity, hitP=null;
   const c=new THREE.Vector3();
   for(const o of active){
-    if(!SHOOTABLE[o.userData.kind]) continue;
-    c.set(o.position.x, o.position.y + (o.userData.kind==='drone'?0:1.15), o.position.z);
+    const k=o.userData.kind;
+    if(!SHOOTABLE[k]) continue;
+    c.set(o.position.x, o.position.y + AIM_Y[k], o.position.z);
     const t=c.clone().sub(rc.ray.origin).dot(rc.ray.direction);
     if(t<=0 || t>=hitT) continue;
     const closest=rc.ray.origin.clone().addScaledVector(rc.ray.direction,t);
-    const r = o.userData.kind==='drone' ? 0.85 : 1.0;          // щедрый радиус — палец толще пикселя
-    if(closest.distanceTo(c) < r + t*0.012){ hit=o; hitT=t; }  // и чем дальше цель, тем шире допуск
-  }
-  if(hit){
-    const p=hit.position.clone(); p.y += hit.userData.kind==='drone'?0:1.2;
-    tracer(p);
-    const blue = hit.userData.kind==='drone';
-    explode(p, blue?0x3a8bff:0xff2626, blue?1:0.85);
-    sparks(p, 12, blue?matBlue:matRed);
+    if(closest.distanceTo(c) < AIM_R[k] + t*0.012){ hit=o; hitT=t; hitP=c.clone(); }
+  }                                                  // радиус щедрый и растёт с дальностью: палец толще пикселя
+  if(!hit){ tracer(rc.ray.origin.clone().addScaledVector(rc.ray.direction, 90)); return; }
+
+  tracer(hitP);
+  const u=hit.userData;
+  u.hp--;
+
+  if(u.kind==='cell'){                               // капсула времени: возвращает шкалу
+    fuel=clamp(fuel+CELL_GAIN, 0, 1);
+    explode(hitP, 0xffffff, 0.7); sparks(hitP, 12, matWhite);
+    slowBtn.classList.remove('gain'); void slowBtn.offsetWidth; slowBtn.classList.add('gain');
+    release(hit);
+  } else if(u.hp > 0){                               // гигант ещё держится — гасим одно ядро
+    if(u.cores && u.cores[u.hp]) u.cores[u.hp].visible=false;
+    sparks(hitP, 10, matBlue); addShake(0.07); hitstop=0.03;
+  } else {
+    const blue = u.kind==='robot';
+    explode(hitP, blue?0x3a8bff:0xff2626, blue?1.6:0.85);
+    sparks(hitP, blue?18:12, blue?matBlue:matRed);
     release(hit);
     kills++; el.kills.firstChild.textContent=kills;
-    hitstop=0.05;
-  } else {
-    tracer(rc.ray.origin.clone().addScaledVector(rc.ray.direction, 90));
+    hitstop=blue?0.08:0.05;
   }
 }
 
@@ -432,46 +500,55 @@ function shoot(px, py){
 //  Управление: свайпы, тап, зажатие
 // ============================================================
 const canvas=renderer.domElement;
-const HOLD_MS=190;                                  // дольше этого — уже не тап, а замедление
-let ptr=null, holdTimer=null;
+let ptr=null;
 canvas.addEventListener('pointerdown', e=>{
   if(!alive) return;
   canvas.setPointerCapture?.(e.pointerId);
   ptr={ id:e.pointerId, x:e.clientX, y:e.clientY, t:performance.now(), swiped:false };
-  clearTimeout(holdTimer);
-  holdTimer=setTimeout(()=>{ if(ptr && !ptr.swiped) slowWanted=true; }, HOLD_MS);
 });
 canvas.addEventListener('pointermove', e=>{
   if(!ptr || e.pointerId!==ptr.id) return;
   const dx=e.clientX-ptr.x, dy=e.clientY-ptr.y;
   if(ptr.swiped) return;
-  if(Math.abs(dx)>26 && Math.abs(dx)>Math.abs(dy)){ setLane(Math.sign(dx)); ptr.swiped=true; slowWanted=false; clearTimeout(holdTimer); }
-  else if(dy<-42 && Math.abs(dy)>Math.abs(dx)){ jump(); ptr.swiped=true; slowWanted=false; clearTimeout(holdTimer); }
+  if(Math.abs(dx)>26 && Math.abs(dx)>Math.abs(dy)){ setLane(Math.sign(dx)); ptr.swiped=true; }
+  else if(dy<-42 && Math.abs(dy)>Math.abs(dx)){ jump(); ptr.swiped=true; }
 });
 canvas.addEventListener('pointerup', e=>{
   if(!ptr || e.pointerId!==ptr.id) return;
-  clearTimeout(holdTimer);
-  if(!ptr.swiped) shoot(e.clientX, e.clientY);     // и короткий тап, и выстрел после прицеливания в слоу-мо
-  ptr=null; slowWanted=false;
+  if(!ptr.swiped) shoot(e.clientX, e.clientY);     // касание без свайпа — выстрел
+  ptr=null;
 });
-canvas.addEventListener('pointercancel', ()=>{ clearTimeout(holdTimer); ptr=null; slowWanted=false; });
+canvas.addEventListener('pointercancel', ()=>{ ptr=null; });
+
+// ---------- кнопка времени: переключатель, а не «держать» — палец остаётся свободен ----------
+function setSlow(on){
+  slowWanted = !!on && fuel > 0.02;
+  slowBtn.classList.toggle('on', slowWanted);
+}
+slowBtn.addEventListener('pointerdown', e=>{
+  e.preventDefault(); e.stopPropagation();
+  if(!alive) return;
+  setSlow(!slowWanted);                            // второй тап выключает, остаток шкалы сохраняется
+});
+slowBtn.addEventListener('contextmenu', e=>e.preventDefault());
 
 // клавиатура — чтобы играть и отлаживать с ноутбука
 addEventListener('keydown', e=>{
   if(e.code==='ArrowLeft'||e.code==='KeyA') setLane(-1);
   if(e.code==='ArrowRight'||e.code==='KeyD') setLane(1);
   if((e.code==='Space'||e.code==='ArrowUp'||e.code==='KeyW') && !e.repeat){ e.preventDefault(); jump(); }
-  if(e.code==='ShiftLeft') slowWanted=true;
+  if(e.code==='ShiftLeft' && !e.repeat) setSlow(!slowWanted);
   if(e.code==='Enter' && !alive) startRun();
 });
-addEventListener('keyup', e=>{ if(e.code==='ShiftLeft') slowWanted=false; });
 
 // ============================================================
 //  Обновления
 // ============================================================
+let worldT=0;                            // «время мира» — тянется медленнее в замедлении
 function updateWorld(dt, wdt){
   const move = speed*wdt;
   dist += move;
+  worldT += wdt;
 
   for(const m of moving){
     m.o.position.z += move*m.k;
@@ -485,31 +562,34 @@ function updateWorld(dt, wdt){
 
   planSpawns(dist);
 
-  const t=clock.getElapsedTime();
   for(let i=active.length-1;i>=0;i--){
     const o=active[i], u=o.userData;
     o.position.z += move;
 
     if(u.kind==='mannequin'){                       // бежит навстречу — машет руками и ногами
-      const g=t*9+u.gait;
+      const g=worldT*9+u.gait;
       u.limbs && u.limbs.forEach((l,k)=>{ l.rotation.x=Math.sin(g+(k%2)*PI)*(k<2?0.8:0.5); });
-      o.rotation.y=PI;
-    } else if(u.kind==='drone'){
-      u.bob+=dt*3;
-      o.position.y = 1.75 + Math.sin(u.bob)*0.25;
-      o.rotation.y += dt*2.4;
+    } else if(u.kind==='cell'){
+      u.bob+=wdt*3;
+      o.position.y = 1.7 + Math.sin(u.bob)*0.25;
+      o.rotation.y += wdt*2.4; o.rotation.x += wdt*1.1;
+      if(u.core) u.core.scale.setScalar(1+0.25*Math.sin(worldT*7+u.gait));
+    } else if(u.kind==='robot'){
+      u.mixer && u.mixer.update(wdt);
     }
 
     if(o.position.z > DESPAWN_Z){ release(o); continue; }
 
-    // столкновение: объект в моей полосе доехал до меня
-    if(Math.abs(o.position.z) < 1.5 && Math.abs(o.position.x - laneX) < LANE_HALF){
+    // столкновение: объект в моей полосе доехал до меня (капсула безвредна — HALF_W 0)
+    const half = HALF_W[u.kind];
+    if(half > 0 && Math.abs(o.position.z) < 1.5 && Math.abs(o.position.x - laneX) < half){
       const cleared = u.kind==='low' && jumpY > 0.6;      // перекладину можно только перепрыгнуть
       if(!cleared){
         if(SHOOTABLE[u.kind]){                            // врага сносим телом, но получаем по лбу
           const p=o.position.clone(); p.y+=1.0;
-          explode(p, u.kind==='drone'?0x3a8bff:0xff2626, 0.9);
-          sparks(p, 8, u.kind==='drone'?matBlue:matRed);
+          const blue = u.kind==='robot';
+          explode(p, blue?0x3a8bff:0xff2626, blue?1.4:0.9);
+          sparks(p, blue?14:8, blue?matBlue:matRed);
           release(o);
         }
         hurt();
@@ -574,8 +654,8 @@ function updateFx(dt){
 
 function updateHud(dt){
   el.dist.firstChild.textContent = Math.floor(dist);
-  el.fuel.style.height=(fuel*100)+'%';
-  el.fuel.classList.toggle('low', fuel<0.25);
+  fuelBar.style.strokeDashoffset = RING*(1-fuel);
+  slowBtn.classList.toggle('empty', fuel<0.15);
   el.tint.classList.toggle('on', timeScale<0.6);
   el.flash.style.opacity = lerp(parseFloat(el.flash.style.opacity)||0, 0, 1-Math.pow(0.0001,dt));
 }
@@ -602,7 +682,7 @@ function startRun(){
 
   lane=1; laneX=0; laneVis=0; jumpY=0; velY=0; onGround=true;
   speed=START_SPEED; dist=0; kills=0; hp=3; iframe=0;
-  timeScale=1; slowWanted=false; fuel=1; nextSpawnAt=40;
+  timeScale=1; fuel=1; nextSpawnAt=40; worldT=0; setSlow(false);
 
   el.hp.forEach(p=>p.classList.remove('gone'));
   el.kills.firstChild.textContent='0';
@@ -634,8 +714,9 @@ function animate(){
   if(alive){
     // слоу-мо: держим палец, пока есть шкала
     const wantSlow = slowWanted && fuel>0.02;
+    if(slowWanted && !wantSlow) setSlow(false);          // шкала кончилась — время само возвращается
     timeScale = damp(timeScale, wantSlow?SLOW_TS:1, 0.0005, dt);
-    fuel = clamp(fuel + (wantSlow ? -dt*0.55 : dt*0.28), 0, 1);
+    fuel = clamp(fuel + (wantSlow ? -dt*SLOW_DRAIN : dt*SLOW_TRICKLE), 0, 1);
     speed = Math.min(MAX_SPEED, speed + SPEED_RAMP*dt);
     if(iframe>0) iframe-=dt;
   } else {
@@ -673,6 +754,7 @@ document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) clock.g
 checkOrientation();
 
 Promise.all(jobs).then(()=>{
+  if(robotProto && robotAnims) pools.robot = makePool(makeRobot, 3);   // пул собираем, когда модель готова
   startBtn.disabled=false;
   startBtn.textContent='Играть';
 });
