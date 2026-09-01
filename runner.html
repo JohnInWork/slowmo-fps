@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#040406">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>SlowmoFPS Runner</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body {
+    height:100%; overflow:hidden; background:#040406;
+    font-family:'Arial Narrow',Arial,sans-serif; color:#fff;
+    touch-action:none; overscroll-behavior:none;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+  }
+  canvas { display:block; touch-action:none; }
+
+  /* безопасные зоны айфона: всё поверх кадра живёт внутри них */
+  #hud {
+    position:fixed; inset:0; pointer-events:none; z-index:10;
+    padding:calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 16px)
+            calc(env(safe-area-inset-bottom) + 14px) calc(env(safe-area-inset-left) + 16px);
+  }
+
+  /* ---------- счётчики ---------- */
+  #dist { position:absolute; left:calc(env(safe-area-inset-left) + 16px); top:calc(env(safe-area-inset-top) + 12px);
+          font-size:44px; font-weight:900; line-height:.9; letter-spacing:1px; }
+  #dist small { display:block; font-size:12px; font-weight:400; letter-spacing:4px; opacity:.5; margin-top:5px; }
+  #kills { position:absolute; right:calc(env(safe-area-inset-right) + 16px); top:calc(env(safe-area-inset-top) + 12px);
+           font-size:22px; font-weight:900; letter-spacing:2px; text-align:right; opacity:.9; }
+  #kills small { display:block; font-size:11px; font-weight:400; letter-spacing:3px; opacity:.55; margin-top:3px; }
+
+  /* ---------- жизни ---------- */
+  #hp { position:absolute; left:calc(env(safe-area-inset-left) + 16px); top:calc(env(safe-area-inset-top) + 78px); display:flex; gap:7px; }
+  #hp i { width:26px; height:5px; background:#ff1e1e; border-radius:2px; transition:opacity .18s, transform .18s; }
+  #hp i.gone { opacity:.16; transform:scaleY(.5); background:#fff; }
+
+  /* ---------- шкала времени ---------- */
+  #fuelwrap { position:absolute; right:calc(env(safe-area-inset-right) + 18px); top:50%; transform:translateY(-50%);
+              width:6px; height:34vh; background:rgba(255,255,255,.1); border-radius:3px; }
+  #fuel { position:absolute; bottom:0; width:100%; height:100%; background:#fff; border-radius:3px; }
+  #fuel.low { background:#ff1e1e; }
+  #fuellab { position:absolute; right:calc(env(safe-area-inset-right) + 30px); top:50%; transform:translateY(-50%);
+             font-size:10px; letter-spacing:3px; opacity:.45; writing-mode:vertical-rl; }
+
+  /* ---------- отметка тапа ---------- */
+  #tapmark { position:absolute; width:46px; height:46px; margin:-23px 0 0 -23px; opacity:0; }
+  #tapmark::before, #tapmark::after { content:''; position:absolute; background:#fff; }
+  #tapmark::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
+  #tapmark::after  { top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
+  #tapmark.on { animation:ping .26s ease-out; }
+  @keyframes ping { from { opacity:.95; transform:scale(.45); } to { opacity:0; transform:scale(1.15); } }
+
+  #hitflash { position:absolute; inset:0; background:#ff1e1e; opacity:0; }
+  #slowtint { position:absolute; inset:0; opacity:0; transition:opacity .2s;
+              box-shadow:inset 0 0 90px rgba(255,255,255,.22); }
+  #slowtint.on { opacity:1; }
+
+  /* ---------- экраны ---------- */
+  .screen {
+    position:fixed; inset:0; z-index:20; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; background:#040406;
+    padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 20px);
+  }
+  #over, #rotate { display:none; }
+  .title { font-size:clamp(44px,15vw,86px); font-weight:900; letter-spacing:6px; line-height:1;
+           text-shadow:0 0 30px rgba(255,255,255,.35); }
+  .title span { color:#ff2626; text-shadow:0 0 40px rgba(255,38,38,.7); }
+  .sub { margin-top:10px; font-size:13px; letter-spacing:6px; opacity:.5; text-transform:uppercase; }
+  .btn { margin-top:36px; padding:18px 54px; font-size:19px; letter-spacing:5px; text-transform:uppercase;
+         background:#fff; color:#040406; border:none; border-radius:2px; font-family:inherit; font-weight:700;
+         cursor:pointer; pointer-events:auto; transition:transform .1s; }
+  .btn:active { transform:scale(.96); }
+  #over .btn { background:#ff1e1e; color:#fff; }
+  .keys { margin-top:42px; font-size:13px; letter-spacing:2px; opacity:.55; line-height:2.1; }
+  .keys b { color:#fff; font-weight:700; opacity:.9; }
+  .final { margin-top:22px; font-size:20px; letter-spacing:3px; }
+  .final b { font-size:56px; font-weight:900; display:block; letter-spacing:1px; margin-bottom:4px; }
+  .best { margin-top:14px; font-size:13px; letter-spacing:3px; opacity:.5; }
+  #rotate .title { font-size:34px; letter-spacing:3px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="dist">0<small>метров</small></div>
+  <div id="kills">0<small>убито</small></div>
+  <div id="hp"><i></i><i></i><i></i></div>
+  <div id="fuelwrap"><div id="fuel"></div></div>
+  <div id="fuellab">ВРЕМЯ</div>
+  <div id="tapmark"></div>
+  <div id="slowtint"></div>
+  <div id="hitflash"></div>
+</div>
+
+<div class="screen" id="menu">
+  <div class="title">SLOWMO<span>FPS</span></div>
+  <div class="sub">runner</div>
+  <button class="btn" id="start">Играть</button>
+  <div class="keys">
+    <b>свайп ◀ ▶</b> сменить полосу<br>
+    <b>свайп ▲</b> прыжок<br>
+    <b>тап</b> выстрел<br>
+    <b>зажать</b> замедлить время
+  </div>
+</div>
+
+<div class="screen" id="over">
+  <div class="title" style="font-size:clamp(34px,11vw,62px)">ТЫ МЁРТВ</div>
+  <div class="final"><b id="finaldist">0</b>метров пройдено</div>
+  <div class="best" id="best"></div>
+  <button class="btn" id="restart">Заново</button>
+</div>
+
+<div class="screen" id="rotate">
+  <div class="title">ПОВЕРНИ<br>ТЕЛЕФОН</div>
+  <div class="sub">игра вертикальная</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="./js/runner.js"></script>
+</body>
+</html>
