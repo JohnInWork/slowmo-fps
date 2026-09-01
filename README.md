@@ -1,32 +1,34 @@
-# SlowmoFPS — прототип
+**English** · [Русский](README.ru.md)
 
-Шутер от первого лица на Three.js: чёрный мир, белые рёбра полигонов, никакой заливки. Время идёт, только когда идёшь ты — стоишь, и мир почти замирает.
+# SUPERHOT FPS — prototype
 
-![SlowmoFPS](screenshots/gameplay.jpg)
+A first-person shooter on Three.js: a black world, white polygon edges, no fills anywhere. Time moves only when you do — stand still and the world nearly freezes.
 
-## Что внутри
+![SUPERHOT FPS](screenshots/gameplay.jpg)
 
-- **Время слушается движения** — без ввода `timeScale` плавно уходит к 0.05, с WASD возвращается к единице; в прыжке действует свой режим, чтобы можно было приземлиться. Слева в HUD полоска показывает текущий ход времени.
-- **Мир из одних рёбер** — геометрия рисуется чёрной заливкой и белым контуром, вдаль растворяется в тумане.
-- **Кинематографическая обработка**: bloom, хроматическая аберрация, виньетка, зерно, скан-линии, тряска и вспышки от попаданий — всё через `EffectComposer` собственными шейдерными проходами.
-- **Оружие**: пистолет с перезарядкой и отдачей, метательные ножи, у каждого своя анимация выноса и осмотра.
-- **Враги** — риггованные GLB-модели, перекрашенные в тот же вайрфрейм, с клонированием скелета через `SkeletonUtils`.
-- Управление: `WASD` — движение, мышь — обзор, `Shift` — рывок, `R` — перезарядка, `Space` — прыжок.
+## What's inside
 
-## Запуск
+- **Time follows your movement** — with no input `timeScale` eases down to 0.05, WASD brings it back to one; jumping has its own rule so you can still land. The bar on the left of the HUD shows how fast time is running.
+- **A world made of edges** — geometry is drawn as black fill plus a white outline, dissolving into fog in the distance.
+- **Cinematic grade**: bloom, chromatic aberration, vignette, film grain, scanlines, shake and hit flashes — all through `EffectComposer` with hand-written shader passes.
+- **Weapons**: a pistol with reload and recoil, throwing knives, each with its own draw and inspect animation.
+- **Enemies** — rigged GLB models repainted into the same wireframe look, cloned through `SkeletonUtils`.
+- Controls: `WASD` to move, mouse to look, `Shift` to dash, `R` to reload, `Space` to jump.
 
-Нужен любой статический сервер (модули ES не работают с `file://`):
+## Running it
+
+Needs any static server (ES modules don't work over `file://`):
 
 ```bash
 python3 -m http.server 8777
 ```
 
-и открыть `http://localhost:8777`.
+then open `http://localhost:8777`.
 
-## Стек
+## Stack
 
-Three.js (ES-модули с CDN), чистый JS без сборщика. `js/main.js` — вся игра, ~1000 строк.
+Three.js (ES modules from a CDN), plain JS with no bundler. `js/main.js` is the whole game, about 1000 lines.
 
-## Ассеты
+## Assets
 
-Модели в `models/` — готовые, не мои: сэмплы из репозитория [glTF-Sample-Models](https://github.com/KhronosGroup/glTF-Sample-Assets) и примеров Three.js (`Soldier`, `Xbot`, `RobotExpressive`, `CesiumMan`, `BrainStem`, `RiggedFigure`), плюс модели оружия и скелетов из свободных библиотек. Лежат в репозитории ради воспроизводимости прототипа.
+The models in `models/` are off-the-shelf, not mine: samples from the [glTF-Sample-Models](https://github.com/KhronosGroup/glTF-Sample-Assets) repository and the Three.js examples (`Soldier`, `Xbot`, `RobotExpressive`, `CesiumMan`, `BrainStem`, `RiggedFigure`), plus weapon and skeleton models from free libraries. They live in the repo so the prototype stays reproducible.
