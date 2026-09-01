@@ -218,8 +218,11 @@ const flash = new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6), matWhite);
 flash.scale.setScalar(0.001); muzzle.add(flash);
 const knifeHolder = new THREE.Group(); camera.add(knifeHolder);
 let knifeProto=null, knifeView=null;
-let recoil=0, runT=0, inspectT=0, throwT=0;
+let recoil=0, runT=0, inspectT=0, throwT=0, idleShowT=rand(8,14);
 const INSPECT_TIME=1.1, THROW_TIME=0.3;
+// поза ножа в покое: лезвие модели идёт по +Z, то есть «от камеры» — без поворота
+// по X мы смотрим на него с торца и видим бесформенный комок
+const KNIFE_IDLE = { p:[0.10,-0.22,-0.50], r:[-1.2,0.35,0.35] };
 
 let weapon='pistol';
 try{ if(localStorage.getItem('slowmofps-weapon')==='knife') weapon='knife'; }catch(e){}
@@ -508,6 +511,7 @@ function applyHit(o, p){
 
 function shoot(px, py){
   if(!alive) return;
+  inspectT=0;                                        // стрельба обрывает осмотр
   el.tap.style.left=px+'px'; el.tap.style.top=py+'px';
   el.tap.classList.remove('on'); void el.tap.offsetWidth; el.tap.classList.add('on');
 
@@ -707,6 +711,17 @@ function updateGun(dt, wdt){
   if(inspectT>0) inspectT-=dt;
   if(throwT>0)   throwT-=dt;
 
+  // время от времени боец сам разглядывает оружие — но только когда на трассе
+  // спокойно, иначе анимация полезет ровно в тот момент, когда надо стрелять
+  if(alive){
+    idleShowT -= dt;
+    if(idleShowT<=0){
+      const busy = active.some(o=>SHOOTABLE[o.userData.kind] && o.position.z > -55);
+      if(!busy && inspectT<=0 && throwT<=0 && recoil<0.05 && onGround) inspectT=INSPECT_TIME;
+      idleShowT = rand(9,17);
+    }
+  }
+
   const run  = alive && onGround;
   const bobY = run ? Math.abs(Math.sin(runT))*0.024 : 0;
   const bobX = run ? Math.sin(runT*0.5)*0.018 : 0;
@@ -725,11 +740,13 @@ function updateGun(dt, wdt){
     }
     poseTo(gunHolder, px,py,pz, rx,ry,rz, dt);
   } else {
-    let px=0.2+bobX, py=-0.26+bobY+air, pz=-0.52;
-    let rx=-0.3, ry=0.3, rz=0.4+roll;
+    // KNIFE_IDLE.p[0] держим малым: при портретном обзоре (~19° в полкадра)
+    // рука с ножом на 0.2 уезжает за правую границу и её просто не видно
+    let px=KNIFE_IDLE.p[0]+bobX, py=KNIFE_IDLE.p[1]+bobY+air, pz=KNIFE_IDLE.p[2];
+    let rx=KNIFE_IDLE.r[0], ry=KNIFE_IDLE.r[1], rz=KNIFE_IDLE.r[2]+roll;
     if(throwT>0){                                        // замах и бросок через себя
       const p=1-throwT/THROW_TIME, arc=Math.sin(p*PI), fwd=Math.sin(Math.min(p*1.35,1)*PI*0.5);
-      px += 0.3*(1-p*p); py += arc*0.1-p*0.04; pz += -fwd*0.32;
+      px += 0.22*(1-p*p); py += arc*0.1-p*0.04; pz += -fwd*0.32;
       ry += 1.1*(1-p)-0.3; rz += -arc*0.9; rx += arc*0.65;
     } else if(inspectT>0){                               // осмотр: нож выносится к центру
       const p=1-inspectT/INSPECT_TIME, q=Math.sin(p*PI);
@@ -814,7 +831,7 @@ function startRun(){
   lane=1; laneX=0; laneVis=0; jumpY=0; velY=0; onGround=true;
   speed=START_SPEED; dist=0; kills=0; hp=3; iframe=0;
   timeScale=1; fuel=1; nextSpawnAt=40; worldT=0; setSlow(false);
-  inspectT=0; throwT=0; runT=0;
+  inspectT=0; throwT=0; runT=0; idleShowT=rand(8,14);
 
   el.hp.forEach(p=>p.classList.remove('gone'));
   el.kills.firstChild.textContent='0';
