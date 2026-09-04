@@ -64,6 +64,20 @@
     font-size:10px; letter-spacing:3px; color:#fff; opacity:.4; font-family:inherit;
   }
 
+  /* ---------- патроны и линия огня ---------- */
+  #ammo { position:absolute; right:calc(env(safe-area-inset-right) + 16px); top:calc(env(safe-area-inset-top) + 74px);
+          text-align:right; opacity:0; transition:opacity .2s; }
+  #ammo.on { opacity:.95; }
+  #ammo b { font-size:26px; font-weight:900; letter-spacing:1px; }
+  #ammo small { display:block; font-size:10px; letter-spacing:3px; opacity:.5; margin-top:2px; }
+  #ammo.low b { color:#ff1e1e; }
+
+  /* выстрел всегда уходит по прямой, поэтому прицел неподвижный */
+  #aim { position:absolute; width:26px; height:26px; margin:-13px 0 0 -13px; opacity:.4; }
+  #aim::before, #aim::after { content:''; position:absolute; background:#fff; }
+  #aim::before { left:50%; top:0; width:1px; height:100%; transform:translateX(-50%); }
+  #aim::after  { top:50%; left:0; height:1px; width:100%; transform:translateY(-50%); }
+
   /* ---------- отметка тапа ---------- */
   #tapmark { position:absolute; width:46px; height:46px; margin:-23px 0 0 -23px; opacity:0; }
   #tapmark::before, #tapmark::after { content:''; position:absolute; background:#fff; }
@@ -124,6 +138,8 @@
   <div id="dist">0<small>метров</small></div>
   <div id="kills">0<small>убито</small></div>
   <div id="hp"><i></i><i></i><i></i></div>
+  <div id="ammo"><b>12</b><small>патронов</small></div>
+  <div id="aim"></div>
   <button id="slowbtn" aria-label="замедлить время">
     <svg class="ring" viewBox="0 0 100 100">
       <circle class="track" cx="50" cy="50" r="44"></circle>
@@ -139,22 +155,14 @@
 <div class="screen" id="menu">
   <div class="title">SLOWMO<span>FPS</span></div>
   <div class="sub">runner</div>
-  <div class="pick">
-    <button class="wbtn on" id="pick-pistol" aria-label="пистолет">
-      <svg viewBox="0 0 24 24"><path d="M4 5h18v4.5H10L8 19H3.5l2-9.5H4V5z"></path></svg>
-    </button>
-    <button class="wbtn" id="pick-knife" aria-label="нож">
-      <svg viewBox="0 0 24 24"><path d="M20.4 2.2c.5-.5 1.3.3.9.9l-8.1 9.6-2.3-2.3 9.5-8.2zM9.6 11.3l3.1 3.1-5.2 5.9c-.6.7-1.7.7-2.4 0l-1.4-1.4c-.7-.7-.7-1.8 0-2.4l5.9-5.2z"></path></svg>
-    </button>
-  </div>
-  <div class="picklab">оружие</div>
   <button class="btn" id="start">Играть</button>
   <div class="keys">
-    <b>свайп ◀ ▶</b> сменить полосу<br>
-    <b>свайп ▲</b> прыжок<br>
-    <b>тап</b> выстрел &nbsp;·&nbsp; <b>зажать</b> осмотр оружия<br>
+    <b>свайп ◀ ▶</b> сменить полосу &nbsp;·&nbsp; <b>свайп ▲</b> прыжок<br>
+    <b>тап</b> бросок ножа — летит прямо по твоей полосе<br>
+    <b>пистолет</b> подбери на трассе: 12 патронов, бьёт далеко<br>
     <b>кнопка внизу</b> замедлить время<br>
-    <b>синие капсулы</b> сбей — время вернётся
+    <b>синие капсулы</b> сбей — время вернётся<br>
+    <b>красные ямы</b> перепрыгивай: падение — сразу конец
   </div>
 </div>
 

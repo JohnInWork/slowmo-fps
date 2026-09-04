@@ -32,6 +32,7 @@ const SLOW_TRICKLE = 0.06;               // сама растёт медленн
 const CELL_GAIN  = 0.34;                 // капсула — это ещё ~2.6 с
 const IFRAMES    = 1.25;                 // неуязвимость после удара
 const BEST_KEY   = 'slowmofps-runner-best';
+const PIT_FROM   = 3000;                 // с какого метра трасса начинает рваться ямами
 
 // ---------- сцена ----------
 const scene = new THREE.Scene();
@@ -217,27 +218,31 @@ const muzzle = new THREE.Object3D(); gunHolder.add(muzzle);
 const flash = new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6), matWhite);
 flash.scale.setScalar(0.001); muzzle.add(flash);
 const knifeHolder = new THREE.Group(); camera.add(knifeHolder);
-let knifeProto=null, knifeView=null;
+let knifeProto=null, knifeView=null, pistolProto=null;
 let recoil=0, runT=0, inspectT=0, throwT=0, idleShowT=rand(5,9);
 const INSPECT_TIME=1.1, THROW_TIME=0.3;
 // поза ножа в покое: лезвие модели идёт по +Z, то есть «от камеры» — без поворота
 // по X мы смотрим на него с торца и видим бесформенный комок
 const KNIFE_IDLE = { p:[0.10,-0.22,-0.50], r:[-1.2,0.35,0.35] };
 
-let weapon='pistol';
-try{ if(localStorage.getItem('slowmofps-weapon')==='knife') weapon='knife'; }catch(e){}
-const pickBtn = { pistol:document.getElementById('pick-pistol'), knife:document.getElementById('pick-knife') };
+// нож — оружие по умолчанию и навсегда: бьёт близко, но не кончается.
+// пистолет подбирается на трассе, бьёт далеко и тратит патроны
+const KNIFE_RANGE=27, PISTOL_RANGE=130, PISTOL_AMMO=12;
+const elAmmo = document.getElementById('ammo');
+let weapon='knife', ammo=0;
 function setWeapon(w){
   weapon=w;
-  try{ localStorage.setItem('slowmofps-weapon', w); }catch(e){}
   gunHolder.visible   = w==='pistol';
   knifeHolder.visible = w==='knife';
-  pickBtn.pistol.classList.toggle('on', w==='pistol');
-  pickBtn.knife.classList.toggle('on', w==='knife');
+  updateAmmoHud();
 }
-pickBtn.pistol.addEventListener('click', ()=>setWeapon('pistol'));
-pickBtn.knife.addEventListener('click', ()=>setWeapon('knife'));
-setWeapon(weapon);
+function updateAmmoHud(){
+  const on = weapon==='pistol';
+  elAmmo.classList.toggle('on', on);
+  elAmmo.classList.toggle('low', on && ammo<=3);
+  if(on) elAmmo.firstChild.textContent=ammo;
+}
+setWeapon('knife');
 
 const jobs=[];
 const gltfLoader=new GLTFLoader();
@@ -253,6 +258,9 @@ jobs.push(gltfLoader.loadAsync('./models/pistol.glb').then(gltf=>{
   if(size.x>size.z) m.rotation.y=PI/2;
   gunHolder.add(m);
   muzzle.position.set(0,0.02,-0.3);
+  pistolProto=new THREE.Group();                       // тот же ствол лежит на трассе как трофей
+  const trophy=m.clone(true); trophy.scale.multiplyScalar(6.5);
+  pistolProto.add(trophy);
 }).catch(e=>console.warn('пистолет не загрузился', e)));
 
 jobs.push(gltfLoader.loadAsync('./models/knife_kabar.glb').then(gltf=>{
@@ -343,6 +351,33 @@ function makeLowBar(){
   return g;
 }
 
+// трофейный пистолет: лежит в полосе и подбирается касанием
+function makeGunPickup(){
+  const g=new THREE.Group();
+  if(pistolProto) g.add(pistolProto.clone(true));
+  else { const b=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.28,0.2), matFill); edged(b); g.add(b); }
+  const ringGeo=new THREE.TorusGeometry(0.85,0.03,6,30);
+  const ringA=new THREE.Mesh(ringGeo, matWhite); ringA.rotation.x=PI/2;
+  const ringB=new THREE.Mesh(ringGeo, matWhite); ringB.rotation.y=PI/2;
+  g.add(ringA, ringB);
+  return g;
+}
+// яма: чёрный проём поверх сетки пола с красной каймой — падение мгновенно смертельно
+// длину держим короткой: прыжок даёт около 0.52 с в воздухе, и яма должна
+// успевать пройти под игроком с запасом, иначе окно на реакцию — сотые доли
+const PIT_W=2.05, PIT_L=6;
+function makePit(){
+  const g=new THREE.Group();
+  const geo=new THREE.PlaneGeometry(PIT_W, PIT_L);
+  const hole=new THREE.Mesh(geo, matFill);
+  hole.rotation.x=-PI/2; hole.position.y=0.05;         // чуть выше линий пола, чтобы их перекрыть
+  hole.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeRed));
+  const inner=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(PIT_W-0.34, PIT_L-0.34)), edgeRed);
+  inner.rotation.x=-PI/2; inner.position.y=0.06;
+  g.add(hole, inner);
+  return g;
+}
+
 function makePool(factory, n){
   const free=[];
   for(let i=0;i<n;i++){ const o=factory(); o.visible=false; scene.add(o); free.push(o); }
@@ -356,17 +391,21 @@ const pools = {
   cell:      makePool(makeCell, 10),
   barrier:   makePool(makeBarrier, 10),
   low:       makePool(makeLowBar, 8),
-};                                        // пул гигантов собирается после загрузки модели
-const SHOOTABLE = { mannequin:true, cell:true, robot:true, barrier:false, low:false };
-const HP        = { mannequin:1, cell:1, robot:3, barrier:0, low:0 };
+  pit:       makePool(makePit, 6),
+};                              // пулы гигантов и трофейных стволов собираются после загрузки моделей
+const SHOOTABLE = { mannequin:true, cell:true, robot:true, barrier:false, low:false, gun:false, pit:false };
+const HP        = { mannequin:1, cell:1, robot:3, barrier:0, low:0, gun:0, pit:0 };
 const AIM_Y     = { mannequin:1.15, cell:0, robot:2.4 };     // куда целиться по высоте
-const AIM_R     = { mannequin:1.0, cell:0.9, robot:1.8 };    // радиус попадания
-const HALF_W    = { mannequin:LANE_HALF, cell:0, robot:2.3, barrier:LANE_HALF, low:LANE_HALF };
+// радиус попадания: у гиганта большой, чтобы его можно было снять и из свободной полосы
+const AIM_R     = { mannequin:1.0, cell:0.9, robot:3.6 };
+const HALF_W    = { mannequin:LANE_HALF, cell:0, robot:2.3, barrier:LANE_HALF, low:LANE_HALF,
+                    gun:LANE_HALF, pit:LANE_HALF };
 
 function spawn(kind, lane, z, xOverride){
   const pool=pools[kind]; if(!pool) return null;
   const o = pool.take(); if(!o) return null;
-  o.position.set(xOverride!=null?xOverride:LANES[lane], kind==='cell' ? 1.7 : 0, z);
+  o.position.set(xOverride!=null?xOverride:LANES[lane],
+                 kind==='cell' ? 1.7 : kind==='gun' ? 1.05 : 0, z);
   o.rotation.set(0,0,0);
   o.userData.kind=kind; o.userData.lane=lane; o.userData.dead=false; o.userData.hp=HP[kind];
   o.userData.bob=rand(0,PI*2); o.userData.gait=rand(0,PI*2);
@@ -389,6 +428,18 @@ function planSpawns(dist){
 
   const freeLane = (Math.random()*3)|0;              // эта полоса остаётся пустой
   const hard = Math.min(dist/900, 1);                // 0..1 — общая злость трассы
+
+  // ямы включаются только на большой дистанции — это поздняя механика
+  if(dist > PIT_FROM && Math.random() < 0.35){
+    const l = (Math.random()*3)|0;
+    spawn('pit', l, SPAWN_Z);
+    if(Math.random()<0.5) spawn('mannequin', l===0?2:0, SPAWN_Z - rand(14,26));
+    return;
+  }
+  // ствол на трассе — только пока игрок без него
+  if(pools.gun && weapon!=='pistol' && Math.random() < 0.22){
+    spawn('gun', freeLane, SPAWN_Z + rand(-8,8));
+  }
 
   // гигант закрывает две полосы: проход остаётся ровно один, и в нём висит капсула
   if(pools.robot && dist > 240 && Math.random() < 0.10 + hard*0.15){
@@ -462,7 +513,9 @@ const el = {
   tint:document.getElementById('slowtint'), menu:document.getElementById('menu'),
   over:document.getElementById('over'), rotate:document.getElementById('rotate'),
   finaldist:document.getElementById('finaldist'), best:document.getElementById('best'),
+  aim:document.getElementById('aim'),
 };
+const aimV = new THREE.Vector3();
 
 function setLane(dir){
   if(!alive) return;
@@ -496,8 +549,6 @@ function die(){
 }
 
 // выстрел в точку экрана: по лучу ищем ближайшую мишень с запасом по радиусу
-const rc=new THREE.Raycaster();
-const ndc=new THREE.Vector2();
 function aimPoint(o, v=new THREE.Vector3()){
   return v.set(o.position.x, o.position.y + AIM_Y[o.userData.kind], o.position.z);
 }
@@ -524,33 +575,46 @@ function applyHit(o, p){
   }
 }
 
+// Выстрел всегда уходит строго вперёд по своей полосе — куда именно ткнули пальцем,
+// не имеет значения. На телефоне целиться в мелкую движущуюся мишень невозможно,
+// а так решение сводится к выбору полосы и момента.
+const shotOrigin=new THREE.Vector3(), c=new THREE.Vector3();
+function takePistol(o){
+  setWeapon('pistol'); ammo=PISTOL_AMMO; updateAmmoHud();
+  const p=o.position.clone();
+  explode(p, 0xffffff, 0.5); sparks(p, 12, matWhite); addFlash(0.1);
+  release(o);
+}
+
 function shoot(px, py){
   if(!alive) return;
   inspectT=0;                                        // стрельба обрывает осмотр
-  el.tap.style.left=px+'px'; el.tap.style.top=py+'px';
-  el.tap.classList.remove('on'); void el.tap.offsetWidth; el.tap.classList.add('on');
-
-  ndc.set((px/innerWidth)*2-1, -(py/innerHeight)*2+1);
-  rc.setFromCamera(ndc, camera);
+  if(px!=null){
+    el.tap.style.left=px+'px'; el.tap.style.top=py+'px';
+    el.tap.classList.remove('on'); void el.tap.offsetWidth; el.tap.classList.add('on');
+  }
+  const range = weapon==='pistol' ? PISTOL_RANGE : KNIFE_RANGE;
+  shotOrigin.set(laneX, PLAYER_Y + jumpY - 0.12, 0);
 
   let hit=null, hitT=Infinity, hitP=null;
-  const c=new THREE.Vector3();
   for(const o of active){
     const k=o.userData.kind;
     if(!SHOOTABLE[k]) continue;
+    const t = -o.position.z;                         // мир едет на игрока: дальность = -z
+    if(t<=0 || t>range || t>=hitT) continue;
     c.set(o.position.x, o.position.y + AIM_Y[k], o.position.z);
-    const t=c.clone().sub(rc.ray.origin).dot(rc.ray.direction);
-    if(t<=0 || t>=hitT) continue;
-    const closest=rc.ray.origin.clone().addScaledVector(rc.ray.direction,t);
-    if(closest.distanceTo(c) < AIM_R[k] + t*0.012){ hit=o; hitT=t; hitP=c.clone(); }
-  }                                                  // радиус щедрый и растёт с дальностью: палец толще пикселя
-  const far = rc.ray.origin.clone().addScaledVector(rc.ray.direction, 90);
+    const off = Math.hypot(c.x-shotOrigin.x, c.y-shotOrigin.y);
+    if(off < AIM_R[k] + Math.min(t*0.02, 0.8)){ hit=o; hitT=t; hitP=c.clone(); }
+  }
+  const far = new THREE.Vector3(shotOrigin.x, shotOrigin.y, -range);
 
   if(weapon==='pistol'){
     recoil=1; addShake(0.05); addFlash(0.03);
     flash.scale.setScalar(rand(0.9,1.4)); flash.rotation.z=rand(0,PI);
     tracer(hit ? hitP : far);
     if(hit) applyHit(hit, hitP);
+    ammo--;
+    if(ammo<=0) setWeapon('knife'); else updateAmmoHud();   // патроны кончились — снова нож
   } else {
     throwT=THROW_TIME; addShake(0.03);
     launchKnife(hit ? hitP : far, hit);              // нож летит и бьёт по прилёте
@@ -673,13 +737,20 @@ function updateWorld(dt, wdt){
       if(u.core) u.core.scale.setScalar(1+0.25*Math.sin(worldT*7+u.gait));
     } else if(u.kind==='robot'){
       u.mixer && u.mixer.update(wdt);
+    } else if(u.kind==='gun'){
+      u.bob+=wdt*2.6;
+      o.position.y = 1.05 + Math.sin(u.bob)*0.18;
+      o.rotation.y += wdt*1.8;
     }
 
     if(o.position.z > DESPAWN_Z){ release(o); continue; }
 
     // столкновение: объект в моей полосе доехал до меня (капсула безвредна — HALF_W 0)
     const half = HALF_W[u.kind];
-    if(half > 0 && Math.abs(o.position.z) < 1.5 && Math.abs(o.position.x - laneX) < half){
+    const zWin = u.kind==='pit' ? PIT_L/2 : 1.5;          // яма длинная, накрывает целый отрезок
+    if(half > 0 && Math.abs(o.position.z) < zWin && Math.abs(o.position.x - laneX) < half){
+      if(u.kind==='gun'){ takePistol(o); continue; }      // трофей — не удар, а находка
+      if(u.kind==='pit'){ if(jumpY < 0.55) die(); continue; }
       const cleared = u.kind==='low' && jumpY > 0.6;      // перекладину можно только перепрыгнуть
       if(!cleared){
         if(SHOOTABLE[u.kind]){                            // врага сносим телом, но получаем по лбу
@@ -829,6 +900,10 @@ function updateFx(dt){
 
 function updateHud(dt){
   el.dist.firstChild.textContent = Math.floor(dist);
+  // прицел показывает, куда уйдёт выстрел: точка своей полосы в 22 метрах впереди
+  aimV.set(laneX, PLAYER_Y-0.15, -22).project(camera);
+  el.aim.style.left = ((aimV.x*0.5+0.5)*innerWidth)+'px';
+  el.aim.style.top  = ((-aimV.y*0.5+0.5)*innerHeight)+'px';
   fuelBar.style.strokeDashoffset = RING*(1-fuel);
   slowBtn.classList.toggle('empty', fuel<0.15);
   el.tint.classList.toggle('on', timeScale<0.6);
@@ -860,6 +935,7 @@ function startRun(){
   speed=START_SPEED; dist=0; kills=0; hp=3; iframe=0;
   timeScale=1; fuel=1; nextSpawnAt=40; worldT=0; setSlow(false);
   inspectT=0; throwT=0; runT=0; idleShowT=rand(5,9);
+  ammo=0; setWeapon('knife');
   dying=false; deathT=0; el.flash.style.opacity=0;
 
   el.hp.forEach(p=>p.classList.remove('gone'));
@@ -939,6 +1015,7 @@ checkOrientation();
 Promise.all(jobs).then(()=>{
   if(robotProto && robotAnims) pools.robot = makePool(makeRobot, 3);   // пул собираем, когда модель готова
   if(knifeProto) knifePool = makePool(()=>knifeProto.clone(true), 8);
+  if(pistolProto) pools.gun = makePool(makeGunPickup, 4);
   startBtn.disabled=false;
   startBtn.textContent='Играть';
 });
